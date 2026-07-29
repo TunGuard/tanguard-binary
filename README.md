@@ -16,14 +16,25 @@ sudo ./tanguard -web
 
 ## Quick Start
 
+### Install the latest binary (recommended)
+
 ```bash
-# Build (or grab a pre-built binary)
+curl -fsSL https://raw.githubusercontent.com/TunGuard/get/main/installer.sh | bash
+```
+
+### Or build from source
+
+```bash
+git clone https://github.com/TunGuard/tanguard-binary.git
+cd tanguard-binary
 go build -o tanguard .
 
-# Run with the web dashboard
 sudo ./tanguard -web
+```
 
-# Full service: VPN + Web UI + SSH jump host
+### Full service: VPN + Web UI + SSH jump host
+
+```bash
 sudo ./tanguard -web -ssh
 ```
 

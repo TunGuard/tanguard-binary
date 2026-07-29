@@ -25,12 +25,30 @@ $api->getStatus();
 Or use the standalone functions:
 
 ```php
-tanguard_addPeer($pubKey, '10.100.0.2');
-tanguard_removePeer($pubKey);
-tanguard_peerExists($pubKey);
-tanguard_checkHandshake($pubKey);
-tanguard_getServerPublicKey();
-tanguard_getServerWgPort();
+require_once '/path/to/tanguard_api.php';
+
+// Add a peer
+if (tanguard_addPeer('PEER_PUBKEY_HEX', '10.100.0.2')) {
+    echo "Peer added successfully\n";
+}
+
+// Check if peer exists
+if (tanguard_peerExists('PEER_PUBKEY_HEX')) {
+    echo "Peer is registered\n";
+}
+
+// Check recent handshake (within last 180s)
+if (tanguard_checkHandshake('PEER_PUBKEY_HEX')) {
+    echo "Peer has connected recently\n";
+}
+
+// Get server info
+$pubkey = tanguard_getServerPublicKey();
+$port   = tanguard_getServerWgPort();
+echo "Server: $pubkey on UDP $port\n";
+
+// Remove a peer
+tanguard_removePeer('PEER_PUBKEY_HEX');
 ```
 
 ## systemd Service
