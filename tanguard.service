@@ -1,0 +1,25 @@
+[Unit]
+Description=TunGuard - Userspace WireGuard Engine with Web UI & SSH Gateway
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tanguard -web -ssh
+WorkingDirectory=/var/lib/tanguard
+Restart=always
+RestartSec=5
+Environment=DATA_DIR=/var/lib/tanguard
+Environment=WG_LISTEN_PORT=13231
+Environment=WG_ADDRESS=10.100.0.1/24
+Environment=API_LISTEN=:9000
+Environment=WEB_USERNAME=admin
+Environment=WEB_PASSWORD=tanguard
+Environment=SSH_USER=tanguard
+Environment=SSH_PASSWORD=tanguard
+Environment=WG_LOG_LEVEL=2
+
+NoNewPrivileges=false
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target

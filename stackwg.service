@@ -1,0 +1,22 @@
+[Unit]
+Description=StackWISP Userspace WireGuard Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/serya/tendaN301-billing/stackwg/stackwg
+WorkingDirectory=/home/serya/tendaN301-billing/stackwg
+Restart=always
+RestartSec=5
+Environment=DATA_DIR=/home/serya/tendaN301-billing/stackwg
+Environment=WG_LISTEN_PORT=13231
+Environment=WG_ADDRESS=10.100.0.1/24
+Environment=API_LISTEN=:9000
+Environment=WG_LOG_LEVEL=2
+
+# Security
+NoNewPrivileges=false
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target

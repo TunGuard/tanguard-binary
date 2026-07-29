@@ -1,0 +1,9 @@
+tanguard
+tanguard.exe
+peers.json
+wg_status.json
+server_private.key
+server_wg_pubkey.txt
+ssh_host_key
+*.log
+.DS_Store

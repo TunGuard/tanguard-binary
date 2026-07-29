@@ -1,0 +1,178 @@
+# TunGuard
+
+**Userspace WireGuard VPN Server — Web Dashboard — SSH Gateway**
+
+TunGuard is a self-contained WireGuard server that runs entirely in userspace — no kernel modules, no `apt install wireguard`, no kernel configuration. It includes a web dashboard for managing peers (clients) and generating ready-to-use configuration files with QR codes for your phone.
+
+```bash
+sudo ./tanguard -web
+# Open http://yourserver:9000 → add clients from your browser
+```
+
+## Quick Start
+
+```bash
+# Build (or grab a pre-built binary)
+go build -o tanguard .
+
+# Run with the web dashboard
+sudo ./tanguard -web
+
+# Full service: VPN + Web UI + SSH jump host
+sudo ./tanguard -web -ssh
+```
+
+- The WireGuard VPN listens on **UDP port 13231** (default).
+- The web dashboard is at **http://yourserver:9000**.
+- Default web login: `admin` / `tanguard`.
+
+## Connecting Clients
+
+### 1. Generate a client config from the web UI
+
+1. Open `http://yourserver:9000` and log in.
+2. Go to the **Peers** page, click **Generate Config**.
+3. Enter a device name (e.g. "My Phone"), click **Generate**.
+4. A complete `.conf` file is created — **Copy**, **Download**, or scan the **QR code** with the WireGuard mobile app.
+
+The config will look like this:
+
+```ini
+[Interface]
+PrivateKey = <client-private-key>
+Address = 10.100.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = <server-public-key>
+Endpoint = yourserver:13231
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+```
+
+### 2. Import the config on your device
+
+| Device | How to import |
+|---|---|
+| **Windows / macOS / Linux** | Open the WireGuard app → "Add Tunnel" → "Import from file" |
+| **iOS / Android** | Use the WireGuard app to scan the QR code from the dashboard |
+| **Linux (wg-quick)** | Copy the `.conf` to `/etc/wireguard/wg0.conf`, run `wg-quick up wg0` |
+
+### 3. That's it
+
+Your device is now connected to the VPN. All traffic is routed through your server.
+
+### Adding an existing key
+
+If you already have a WireGuard keypair (e.g. from a router or a device that generated its own keys), go to the **Peers** page → **Add Existing Key** and enter the public key and the IP you want to assign.
+
+### Removing a peer
+
+Click the **Remove** button next to any peer on the Peers page, or call:
+
+```bash
+curl -X POST http://localhost:9000/api/peer/remove \
+  -H "Content-Type: application/json" \
+  -d '{"public_key":"..."}'
+```
+
+## Web Dashboard
+
+The dashboard runs on port **9000** (same port as the API). It has three sections:
+
+| Section | What you can do |
+|---|---|
+| **Dashboard** | Server status, peer count, data transfer totals |
+| **Peers** | List peers, add/generate configs, view status, download configs, scan QR codes, remove peers |
+| **Settings** | Reference of all configuration options |
+
+The status page refreshes every 10 seconds. You'll see transfer stats, last handshake times, and online/offline status for each peer.
+
+## SSH Gateway (optional)
+
+Enable with `-ssh` or `SSH_ENABLED=true`. This turns TunGuard into an SSH jump host so you can SSH into any connected peer through the server:
+
+```bash
+ssh -J tanguard@yourserver:2222 root@10.100.0.2
+```
+
+Default SSH credentials: `tanguard` / `tanguard`.
+
+You can also SSH directly from the web dashboard — click the **SSH** button next to any online peer to open a browser terminal.
+
+## Running as a systemd Service
+
+```bash
+sudo cp tanguard.service /etc/systemd/system/
+sudo mkdir -p /var/lib/tanguard
+sudo systemctl daemon-reload
+sudo systemctl enable tanguard
+sudo systemctl start tanguard
+```
+
+## Configuration
+
+All settings are configured via environment variables.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WG_INTERFACE` | `wg0` | WireGuard interface name |
+| `WG_LISTEN_PORT` | `13231` | WireGuard UDP port (the port clients connect to) |
+| `WG_ADDRESS` | `10.100.0.1/24` | Server IP on the VPN subnet |
+| `WG_SUBNET` | `10.100.0.0/24` | Subnet assigned to VPN clients |
+| `WG_MTU` | `1420` | WireGuard MTU |
+| `API_LISTEN` | `:9000` | Web dashboard + API address |
+| `DATA_DIR` | `.` | Directory for keys and peer data |
+| `EXTERNAL_NIC` | auto | External network interface for NAT (auto-detected) |
+| `WEB_USERNAME` | `admin` | Dashboard login username |
+| `WEB_PASSWORD` | `tanguard` | Dashboard login password |
+| `SSH_ENABLED` | `false` | Enable SSH gateway (or use `-ssh`) |
+| `SSH_LISTEN` | `:2222` | SSH gateway address |
+| `SSH_USER` | `tanguard` | SSH gateway username |
+| `SSH_PASSWORD` | `tanguard` | SSH gateway password |
+
+## Building from Source
+
+```bash
+git clone <repo> && cd tanguard
+go build -o tanguard .
+```
+
+Requires Go 1.22+. The binary is statically linked — copy it to any Linux server.
+
+## Security Notes
+
+- **Change the default passwords** (`WEB_PASSWORD`, `SSH_PASSWORD`) in production.
+- The web dashboard uses HTTP Basic Auth over plain HTTP by default. Put it behind a reverse proxy with TLS (e.g. Caddy, Nginx, or Traefik) for production use.
+- The SSH gateway uses password auth by default. Consider key-based auth for production.
+
+## API Reference (curl)
+
+```bash
+# Server info
+curl http://localhost:9000/api/health
+curl http://localhost:9000/api/status
+curl http://localhost:9000/api/server_key
+curl http://localhost:9000/api/peers
+
+# Add a peer with an existing key
+curl -X POST http://localhost:9000/api/peer/add \
+  -H "Content-Type: application/json" \
+  -d '{"public_key":"PEER_PUBKEY_HEX","allowed_ip":"10.100.0.2/32","device_name":"my-device"}'
+
+# Auto-generate a new client config (server creates keypair)
+curl -X POST http://localhost:9000/api/peer/generate-config \
+  -H "Content-Type: application/json" \
+  -d '{"device_name":"my-phone","server_host":"vpn.example.com"}'
+
+# Remove a peer
+curl -X POST http://localhost:9000/api/peer/remove \
+  -H "Content-Type: application/json" \
+  -d '{"public_key":"PEER_PUBKEY_HEX"}'
+```
+
+See `INTEGRATION.md` for the WebSocket SSH protocol and PHP integration.
+
+## License
+
+MIT
