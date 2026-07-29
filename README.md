@@ -1,5 +1,10 @@
 # TunGuard
 
+[![Go Version](https://img.shields.io/github/go-mod/go-version/TunGuard/tanguard-binary)](https://golang.org)
+[![License](https://img.shields.io/github/license/TunGuard/tanguard-binary)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/TunGuard/tanguard-binary)](https://github.com/TunGuard/tanguard-binary/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/TunGuard/tanguard-binary/release.yml?branch=main)](https://github.com/TunGuard/tanguard-binary/actions)
+
 **Userspace WireGuard VPN Server — Web Dashboard — SSH Gateway**
 
 TunGuard is a self-contained WireGuard server that runs entirely in userspace — no kernel modules, no `apt install wireguard`, no kernel configuration. It includes a web dashboard for managing peers (clients) and generating ready-to-use configuration files with QR codes for your phone.
