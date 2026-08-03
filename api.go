@@ -15,10 +15,11 @@ type API struct {
 	wg    *WgServer
 	store *PeerStore
 	cfg   *Config
+	creds *CredentialStore
 }
 
-func NewAPI(wg *WgServer, store *PeerStore, cfg *Config) *API {
-	return &API{wg: wg, store: store, cfg: cfg}
+func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore) *API {
+	return &API{wg: wg, store: store, cfg: cfg, creds: creds}
 }
 
 func (a *API) Start() {
@@ -28,9 +29,15 @@ func (a *API) Start() {
 		mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
-		webHandler := basicAuth(webUIHandler(), a.cfg.WebUsername, a.cfg.WebPassword)
+		webHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !a.authenticated(r) {
+				requireBasicAuth(w)
+				return
+			}
+			webUIHandler().ServeHTTP(w, r)
+		})
 		mux.Handle("/", webHandler)
-		log.Printf("[api] web interface enabled (auth: %s)", a.cfg.WebUsername)
+		log.Printf("[api] web dashboard enabled at http://localhost%s (auth: %s)", a.cfg.APIListen, a.effectiveWebUsername())
 	}
 
 	mux.HandleFunc("/api/health", a.handleHealth)
@@ -41,6 +48,8 @@ func (a *API) Start() {
 	mux.HandleFunc("/api/server_key", a.handleServerKey)
 	mux.HandleFunc("/api/peer/generate-config", a.handleGenerateConfig)
 	mux.HandleFunc("/api/configure", a.handleConfigure)
+	mux.HandleFunc("/api/auth/status", a.handleAuthStatus)
+	mux.HandleFunc("/api/web/credentials", a.handleChangeCredentials)
 	mux.HandleFunc("/api/ws/ssh", a.handleWebSSH)
 
 	handler := corsMiddleware(logMiddleware(mux))
@@ -49,6 +58,95 @@ func (a *API) Start() {
 	if err := http.ListenAndServe(a.cfg.APIListen, handler); err != nil {
 		log.Fatalf("[api] server failed: %v", err)
 	}
+}
+
+func (a *API) effectiveWebUsername() string {
+	if u, ok := a.creds.Username(); ok {
+		return u
+	}
+	return a.cfg.WebUsername
+}
+
+func (a *API) authenticated(r *http.Request) bool {
+	user, pass, ok := r.BasicAuth()
+	if !ok {
+		return false
+	}
+	if valid, custom := a.creds.Verify(user, pass); custom {
+		return valid
+	}
+	return user == a.cfg.WebUsername && pass == a.cfg.WebPassword
+}
+
+func (a *API) usingDefaultWebCreds() bool {
+	if a.creds.Exists() {
+		return false
+	}
+	return a.cfg.WebUsername == "admin" && a.cfg.WebPassword == "tanguard"
+}
+
+func requireBasicAuth(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Basic realm="TunGuard"`)
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+}
+
+func (a *API) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if !a.authenticated(r) {
+		requireBasicAuth(w)
+		return
+	}
+	jsonResp(w, 200, map[string]interface{}{
+		"authenticated": true,
+		"username":      a.effectiveWebUsername(),
+		"must_change":   a.usingDefaultWebCreds(),
+	})
+}
+
+func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonErr(w, 405, "POST required")
+		return
+	}
+	if !a.authenticated(r) {
+		requireBasicAuth(w)
+		return
+	}
+
+	var req struct {
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" {
+		jsonErr(w, 400, "username cannot be empty")
+		return
+	}
+	if len(req.Password) < 8 {
+		jsonErr(w, 400, "password must be at least 8 characters")
+		return
+	}
+	if req.Password != req.ConfirmPassword {
+		jsonErr(w, 400, "passwords do not match")
+		return
+	}
+
+	if err := a.creds.Set(req.Username, req.Password); err != nil {
+		jsonErr(w, 500, "failed to save credentials: "+err.Error())
+		return
+	}
+
+	log.Printf("[api] web dashboard credentials updated for user %q", req.Username)
+	jsonResp(w, 200, map[string]interface{}{
+		"success":     true,
+		"username":    req.Username,
+		"must_change": false,
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

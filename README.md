@@ -39,8 +39,9 @@ sudo ./tanguard -web -ssh
 ```
 
 - The WireGuard VPN listens on **UDP port 13231** (default).
-- The web dashboard is at **http://yourserver:9000**.
-- Default web login: `admin` / `tanguard`.
+- The web dashboard is disabled by default — start it explicitly with `-web` (or `WEB_ENABLED=true`).
+- When enabled, the web dashboard is at **http://yourserver:9000**.
+- Default web login: `admin` / `tanguard`. On first login you will be required to set a new username and password.
 
 ## Connecting Clients
 
@@ -94,7 +95,7 @@ curl -X POST http://localhost:9000/api/peer/remove \
 
 ## Web Dashboard
 
-The dashboard runs on port **9000** (same port as the API). It has three sections:
+The dashboard runs on port **9000** (same port as the API). It is **disabled by default** — enable it with `-web` or `WEB_ENABLED=true`. It has three sections:
 
 | Section | What you can do |
 |---|---|
@@ -103,6 +104,22 @@ The dashboard runs on port **9000** (same port as the API). It has three section
 | **Settings** | Reference of all configuration options |
 
 The status page refreshes every 10 seconds. You'll see transfer stats, last handshake times, and online/offline status for each peer.
+
+### Changing the dashboard login
+
+When you log in with the default `admin` / `tanguard` credentials for the first time, you are taken straight to a screen that requires you to set a new username and password before you can use the dashboard.
+
+You can change the dashboard login again at any time under **Settings → Dashboard Login**. The new credentials are saved (hashed) in `web_credentials.json` inside your `DATA_DIR` and take effect immediately.
+
+### Forgotten dashboard password
+
+If you forget the dashboard password, reset it from the terminal:
+
+```bash
+sudo ./tanguard --reset
+```
+
+This removes the stored login and restores the default `admin` / `tanguard`. Start the server again and log in to set a new password.
 
 ## SSH Gateway (optional)
 
@@ -140,8 +157,9 @@ All settings are configured via environment variables.
 | `API_LISTEN` | `:9000` | Web dashboard + API address |
 | `DATA_DIR` | `.` | Directory for keys and peer data |
 | `EXTERNAL_NIC` | auto | External network interface for NAT (auto-detected) |
-| `WEB_USERNAME` | `admin` | Dashboard login username |
-| `WEB_PASSWORD` | `tanguard` | Dashboard login password |
+| `WEB_ENABLED` | `false` | Enable the web dashboard (or use `-web`) |
+| `WEB_USERNAME` | `admin` | Dashboard login username (only used until changed from the dashboard) |
+| `WEB_PASSWORD` | `tanguard` | Dashboard login password (only used until changed from the dashboard) |
 | `SSH_ENABLED` | `false` | Enable SSH gateway (or use `-ssh`) |
 | `SSH_LISTEN` | `:2222` | SSH gateway address |
 | `SSH_USER` | `tanguard` | SSH gateway username |
@@ -158,7 +176,7 @@ Requires Go 1.22+. The binary is statically linked — copy it to any Linux serv
 
 ## Security Notes
 
-- **Change the default passwords** (`WEB_PASSWORD`, `SSH_PASSWORD`) in production.
+- **Change the default passwords** (`WEB_PASSWORD`, `SSH_PASSWORD`) in production. The dashboard forces you to set a new web login on first use; use `tanguard --reset` if you ever lose it.
 - The web dashboard uses HTTP Basic Auth over plain HTTP by default. Put it behind a reverse proxy with TLS (e.g. Caddy, Nginx, or Traefik) for production use.
 - The SSH gateway uses password auth by default. Consider key-based auth for production.
 

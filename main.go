@@ -20,22 +20,29 @@ func printUsage() {
 	fmt.Println("Environment variables:")
 	fmt.Println("  API_LISTEN       HTTP API address (default :9000)")
 	fmt.Println("  WG_LISTEN_PORT   WireGuard UDP port (default 13231)")
+	fmt.Println("  WEB_ENABLED      Enable web dashboard (default false, or use -web)")
 	fmt.Println("  WEB_USERNAME     Web UI username (default admin)")
 	fmt.Println("  WEB_PASSWORD     Web UI password (default tanguard)")
 	fmt.Println("  SSH_USER         SSH gateway username (default tanguard)")
 	fmt.Println("  SSH_PASSWORD     SSH gateway password (default tanguard)")
+	fmt.Println()
+	fmt.Println("The web dashboard is disabled by default. Enable it with -web or WEB_ENABLED=true.")
+	fmt.Println("On first login with the default admin/tanguard password you will be asked to set a new login.")
+	fmt.Println("If you forget the new login, run 'tanguard --reset' to restore the defaults.")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  sudo tanguard")
 	fmt.Println("  sudo tanguard -web")
 	fmt.Println("  sudo tanguard -web -ssh")
 	fmt.Println("  sudo tanguard -web -ssh -api :8080")
+	fmt.Println("  sudo tanguard --reset")
 	os.Exit(0)
 }
 
 func main() {
-	webFlag := flag.Bool("web", false, "Enable web interface")
+	webFlag := flag.Bool("web", false, "Enable web dashboard")
 	sshFlag := flag.Bool("ssh", false, "Enable SSH gateway")
+	resetFlag := flag.Bool("reset", false, "Reset web dashboard credentials to default (admin/tanguard)")
 	hFlag := flag.Bool("help", false, "Show usage")
 	flag.Parse()
 
@@ -47,6 +54,23 @@ func main() {
 	log.Println("[main] TunGuard - userspace WireGuard server")
 
 	cfg := loadConfig()
+
+	creds := NewCredentialStore(cfg.DataDir)
+	if *resetFlag {
+		if err := creds.Load(); err != nil {
+			log.Fatalf("[main] could not load web credentials: %v", err)
+		}
+		if err := creds.Reset(); err != nil {
+			log.Fatalf("[main] could not reset web credentials: %v", err)
+		}
+		fmt.Println("Web dashboard credentials reset to default login: admin / tanguard")
+		fmt.Println("Start the server and log in again to set new credentials.")
+		os.Exit(0)
+	}
+	if err := creds.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load web credentials: %v", err)
+	}
+
 	if *webFlag {
 		cfg.WebEnabled = true
 	}
@@ -57,8 +81,11 @@ func main() {
 		cfg.InterfaceName, cfg.ListenPort, cfg.Address, cfg.APIListen,
 		cfg.WebEnabled, cfg.SSHEnabled)
 	if cfg.WebEnabled {
-		log.Printf("[main] web UI at http://localhost%s  user=%s  pass=%s",
-			cfg.APIListen, cfg.WebUsername, cfg.WebPassword)
+		user := cfg.WebUsername
+		if u, ok := creds.Username(); ok {
+			user = u
+		}
+		log.Printf("[main] web dashboard at http://localhost%s  user=%s", cfg.APIListen, user)
 	}
 
 	store := NewPeerStore(cfg.DataDir)
@@ -92,7 +119,7 @@ func main() {
 
 	setupNAT(cfg)
 
-	api := NewAPI(wg, store, cfg)
+	api := NewAPI(wg, store, cfg, creds)
 	go api.Start()
 
 	if cfg.SSHEnabled {

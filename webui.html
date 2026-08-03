@@ -79,6 +79,9 @@ textarea:focus{border-color:var(--green-light)}
 .config-qr-label{font-size:11px;color:var(--fg2);margin-top:6px}
 .copy-btn{position:relative;float:right}
 .green-tag{background:var(--green-pale);color:var(--green);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500}
+#change-creds-screen{position:fixed;inset:0;background:var(--bg);z-index:300;display:none;align-items:center;justify-content:center;padding:24px}
+#change-creds-screen.open{display:flex}
+#change-creds-screen .card{max-width:420px;width:100%}
 </style>
 </head>
 <body>
@@ -200,6 +203,20 @@ textarea:focus{border-color:var(--green-light)}
 <h2>Settings</h2>
 <p class="desc">TunGuard configuration reference</p>
 <div class="card">
+<h3>Dashboard Login</h3>
+<p class="desc">Change the username and password used to access this dashboard.</p>
+<form class="web-login-form" onsubmit="changeCredentials(event)">
+<div class="form-row">
+<input name="username" placeholder="New username" required>
+<input name="password" type="password" placeholder="New password (min 8 chars)" required>
+<input name="confirm_password" type="password" placeholder="Confirm password" required>
+</div>
+<div style="display:flex;gap:8px">
+<button type="submit" class="btn btn-primary">Update Login</button>
+</div>
+</form>
+</div>
+<div class="card">
 <h3>Environment Variables</h3>
 <table>
 <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
@@ -220,6 +237,19 @@ textarea:focus{border-color:var(--green-light)}
 </div>
 </div>
 </main>
+
+<div id="change-creds-screen">
+<div class="card">
+<h2 style="margin-bottom:8px">Set your dashboard login</h2>
+<p class="desc">For security you must change the default <code>admin</code> / <code>tanguard</code> login before using the dashboard.</p>
+<form class="web-login-form" onsubmit="changeCredentials(event)">
+<input name="username" placeholder="New username" required>
+<input name="password" type="password" placeholder="New password (min 8 chars)" required>
+<input name="confirm_password" type="password" placeholder="Confirm password" required>
+<button type="submit" class="btn btn-primary">Save &amp; Log In</button>
+</form>
+</div>
+</div>
 
 <div id="terminal-container">
 <div id="terminal-bar">
@@ -561,7 +591,44 @@ function showPasswordPrompt() {
   });
 }
 
+async function changeCredentials(e) {
+  e.preventDefault();
+  const f = e.target;
+  if (f.password.value !== f.confirm_password.value) {
+    showToast('Passwords do not match', 'error');
+    return;
+  }
+  const btn = f.querySelector('button[type=submit]');
+  btn.disabled = true;
+  const r = await fetchAPI('/api/web/credentials', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      username: f.username.value,
+      password: f.password.value,
+      confirm_password: f.confirm_password.value
+    })
+  });
+  btn.disabled = false;
+  if (r && r.success) {
+    document.getElementById('change-creds-screen').classList.remove('open');
+    f.reset();
+    showToast('Credentials updated. Log in again with the new credentials.','success');
+    setTimeout(() => location.reload(), 1500);
+  } else {
+    showToast('Failed to update credentials: '+(r?.error||'unknown'),'error');
+  }
+}
+
+async function checkAuthStatus() {
+  const r = await fetchAPI('/api/auth/status');
+  if (r && r.must_change) {
+    document.getElementById('change-creds-screen').classList.add('open');
+  }
+}
+
 refresh();
+checkAuthStatus();
 setInterval(refresh, 10000);
 </script>
 </body>
