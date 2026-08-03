@@ -6,11 +6,11 @@ import (
 	"net/http"
 )
 
-//go:embed webui.html
+//go:embed webui
 var webUIFS embed.FS
 
 func webUIHandler() http.Handler {
-	sub, err := fs.Sub(webUIFS, ".")
+	sub, err := fs.Sub(webUIFS, "webui")
 	if err != nil {
 		return http.NotFoundHandler()
 	}

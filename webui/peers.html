@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TunGuard - Peers</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="hold-transition sidebar-mini layout-fixed" data-page="peers">
+<div class="wrapper">
+
+<div class="content-wrapper">
+<section class="content">
+<div class="container-fluid py-4">
+
+<div class="mb-4 d-flex justify-content-between align-items-start flex-wrap">
+<div><h4 class="mb-1" style="font-weight:800;color:#1a1a2e;">Peers</h4><p class="text-muted mb-0" style="font-size:.9rem;">Connected WireGuard peers</p></div>
+<div class="d-flex" style="gap:8px">
+<button class="btn btn-success" onclick="quickConfig()"><i class="fas fa-plus mr-1"></i>Quick Config</button>
+<button class="btn btn-primary" onclick="showAddPeer()"><i class="fas fa-plus mr-1"></i>Add Existing</button>
+</div>
+</div>
+
+<div class="chart-card" id="add-peer-form" style="display:none;margin-bottom:16px;">
+<div class="tabs">
+<div class="tab active" data-tab="manual" onclick="switchAddTab('manual')">Add Existing Key</div>
+<div class="tab" data-tab="generate" onclick="switchAddTab('generate')">Generate Config</div>
+</div>
+
+<div id="tab-manual" class="tab-content active">
+<h6 style="margin-bottom:12px;font-weight:700">Add Existing Peer</h6>
+<form onsubmit="addPeer(event)">
+<div class="form-row">
+<div class="col-md-6 mb-2"><input class="form-control" name="public_key" placeholder="Public Key (hex)" required></div>
+<div class="col-md-6 mb-2"><input class="form-control" name="allowed_ip" placeholder="Allowed IP (e.g. 10.100.0.2/32)" required></div>
+</div>
+<div class="form-row">
+<div class="col-md-6 mb-2"><input class="form-control" name="device_id" placeholder="Device ID (optional)"></div>
+<div class="col-md-6 mb-2"><input class="form-control" name="device_name" placeholder="Device Name (optional)"></div>
+</div>
+<div class="form-row">
+<div class="col-md-6 mb-2"><input class="form-control" name="preshared_key" placeholder="Pre-shared Key (optional)"></div>
+<div class="col-md-6 mb-2 d-flex align-items-center" style="gap:8px">
+<button type="submit" class="btn btn-primary">Add Peer</button>
+<button type="button" class="btn btn-outline-secondary" onclick="hideAddPeer()">Cancel</button>
+</div>
+</div>
+</form>
+</div>
+
+<div id="tab-generate" class="tab-content">
+<h6 style="margin-bottom:12px;font-weight:700">Generate WireGuard Config</h6>
+<form onsubmit="generateConfig(event)">
+<div class="form-row">
+<div class="col-md-6 mb-2"><input class="form-control" name="device_name" placeholder="Device Name (e.g. my-phone)" required></div>
+<div class="col-md-6 mb-2"><input class="form-control" name="device_id" placeholder="Device ID (optional)"></div>
+</div>
+<div class="form-row">
+<div class="col-md-6 mb-2"><input class="form-control" name="server_host" placeholder="Server Host/IP" id="server-host-input"></div>
+<div class="col-md-6 mb-2"><input class="form-control" name="dns" placeholder="DNS (default 1.1.1.1)"></div>
+</div>
+<div class="form-row">
+<div class="col-md-6 mb-2"><input class="form-control" name="allowed_ip" placeholder="IP (auto-assign if blank)"></div>
+<div class="col-md-6 mb-2 d-flex align-items-center" style="gap:8px">
+<button type="submit" class="btn btn-success" id="gen-btn">Generate Config</button>
+<button type="button" class="btn btn-outline-secondary" onclick="hideAddPeer()">Cancel</button>
+</div>
+</div>
+</form>
+</div>
+</div>
+
+<div id="config-result" style="display:none;margin-bottom:16px;">
+<div class="chart-card">
+<h6 style="margin-bottom:12px;font-weight:700">WireGuard Config <span id="config-device-name" style="color:#6c757d;font-weight:400"></span></h6>
+<div class="config-display">
+<div class="config-text">
+<button class="btn btn-sm btn-outline-secondary copy-btn" onclick="copyConfig()"><i class="far fa-copy mr-1"></i>Copy</button>
+<textarea class="form-control" id="config-textarea" readonly style="min-height:150px"></textarea>
+<div style="display:flex;gap:8px;margin-top:8px">
+<button class="btn btn-sm btn-primary" onclick="downloadConfig()">Download .conf</button>
+<button class="btn btn-sm btn-outline-secondary" onclick="hideConfigResult()">Dismiss</button>
+</div>
+</div>
+<div class="config-qr">
+<div id="qrcode"></div>
+<div class="config-qr-label">Scan with WireGuard mobile app</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="table-card">
+<table class="table">
+<thead><tr><th>Status</th><th>Device</th><th>Allowed IP</th><th>Public Key</th><th>Endpoint</th><th>Transfer</th><th>Handshake</th><th></th></tr></thead>
+<tbody id="peers-tbody">
+<tr><td colspan="8" class="empty-state">No peers connected</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+</section>
+</div>
+
+</div>
+
+<div id="terminal-container">
+<div id="terminal-bar">
+<span id="terminal-title">SSH Terminal</span>
+<button onclick="closeTerminal()">&times;</button>
+</div>
+<div id="terminal"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="qrcode.min.js"></script>
+<script src="common.js"></script>
+<script src="peers.js"></script>
+</body>
+</html>

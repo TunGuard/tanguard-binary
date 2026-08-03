@@ -5,5 +5,6 @@ wg_status.json
 server_private.key
 server_wg_pubkey.txt
 ssh_host_key
+web_credentials.json
 *.log
 .DS_Store

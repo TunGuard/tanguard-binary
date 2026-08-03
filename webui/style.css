@@ -1,0 +1,81 @@
+:root{--green:#16a34a;--green-light:#22c55e;--green-pale:#dcfce7}
+body{background:#f4f6f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#1a1a2e}
+
+/* ===== Sidebar (matching billing dashboard) ===== */
+.sidebar-glass{background:#343a40;color:#fff!important}
+.sidebar-glass .brand-link{background:#23272b;color:#fff!important;font-weight:700;font-size:1.25rem;text-align:center;padding:1rem 0;border-bottom:1px solid #3c4043}
+.sidebar-glass .nav-sidebar .nav-link{color:#fff!important;border-radius:8px;padding:.55rem 1rem;margin:2px 8px;display:flex;align-items:center;transition:all .25s ease;font-size:.9rem;cursor:pointer}
+.sidebar-glass .nav-sidebar .nav-link.active{background:rgba(0,123,255,.25)}
+.sidebar-glass .nav-sidebar .nav-link:hover{background:rgba(0,123,255,.15);transform:translateX(3px)}
+.sidebar-glass .nav-item:nth-child(1) .nav-icon{color:#007bff}
+.sidebar-glass .nav-item:nth-child(2) .nav-icon{color:#20c997}
+.sidebar-glass .nav-item:nth-child(3) .nav-icon{color:#ffc107}
+.sidebar-glass::-webkit-scrollbar{width:8px}
+.sidebar-glass::-webkit-scrollbar-thumb{background:rgba(0,123,255,.3);border-radius:10px}
+.sidebar-logout{margin-top:auto;width:80%;align-self:center;padding-bottom:1rem}
+.sidebar-logout a{display:block;text-align:center;padding:10px 0;background:#dc3545;color:#fff!important;border-radius:45px;font-weight:600;transition:all .25s ease;text-decoration:none}
+.sidebar-logout a:hover{background:#c82333}
+
+/* ===== Stat cards (matching billing dashboard) ===== */
+.dash-stat-card{background:#fff;border-radius:14px;padding:1.5rem;position:relative;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.06);border:1px solid #eef0f2;transition:transform .2s;height:100%}
+.dash-stat-card:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(0,0,0,.1)}
+.dash-stat-card .icon-box{width:52px;height:52px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;color:#fff;margin-bottom:1rem}
+.dash-stat-card .stat-value{font-size:1.35rem;font-weight:800;color:#1a1a2e;line-height:1.2;font-family:'SF Mono',Monaco,monospace;word-break:break-all}
+.dash-stat-card .stat-label{font-size:.82rem;color:#6c757d;margin-top:4px;font-weight:500}
+.dash-stat-card .stat-sub{font-size:.78rem;color:#999;margin-top:6px}
+
+/* ===== Cards ===== */
+.chart-card{background:#fff;border-radius:14px;padding:1.25rem;box-shadow:0 2px 12px rgba(0,0,0,.06);border:1px solid #eef0f2;margin-bottom:1.25rem}
+
+/* ===== Quick actions ===== */
+.quick-action-btn{display:flex;align-items:center;gap:10px;background:#f8f9fc;border:1px solid #e4e7ec;border-radius:10px;padding:.85rem 1rem;text-decoration:none;color:#333;font-weight:600;font-size:.9rem;transition:all .2s;width:100%;cursor:pointer;text-align:left}
+.quick-action-btn:hover{background:#e8f0fe;border-color:#b3cfff;color:#0056d2;transform:translateX(4px)}
+.quick-action-btn i{font-size:1.1rem}
+
+/* ===== Status dots ===== */
+.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:10px;flex-shrink:0}
+.status-dot.online{background:#28a745;box-shadow:0 0 6px rgba(40,167,69,.4)}
+.status-dot.offline{background:#dc3545}
+
+/* ===== Table ===== */
+.table-card{background:#fff;border-radius:14px;padding:1.25rem;box-shadow:0 2px 12px rgba(0,0,0,.06);border:1px solid #eef0f2}
+.table th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#6c757d;font-weight:600}
+.table td{font-family:'SF Mono',Monaco,monospace;font-size:12px;vertical-align:middle}
+.empty-state{text-align:center;padding:40px;color:#6c757d}
+
+/* ===== Tabs (add peer) ===== */
+.tabs{display:flex;border-bottom:1px solid #e4e7ec;margin-bottom:16px}
+.tab{padding:10px 20px;cursor:pointer;color:#6c757d;font-size:13px;font-weight:500;border-bottom:2px solid transparent;transition:all .15s}
+.tab:hover{color:#0056d2}
+.tab.active{color:#0056d2;border-bottom-color:#007bff}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* ===== Config display ===== */
+.config-display{display:flex;gap:24px;flex-wrap:wrap}
+.config-display .config-text{flex:1;min-width:280px}
+.config-display .config-qr{flex:0 0 auto;text-align:center}
+.config-display .config-qr canvas{border-radius:10px;background:#fff;padding:10px;border:1px solid #e4e7ec}
+.config-qr-label{font-size:11px;color:#6c757d;margin-top:6px}
+.copy-btn{position:relative;float:right}
+textarea.form-control{font-family:'SF Mono',Monaco,monospace;font-size:12px}
+
+/* ===== Terminal ===== */
+#terminal-container{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:1500;display:none;flex-direction:column}
+#terminal-container.open{display:flex}
+#terminal-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:#fff;border-bottom:1px solid #eef0f2}
+#terminal-bar span{font-weight:500;font-size:13px}
+#terminal-bar button{background:none;border:none;color:#6c757d;font-size:22px;cursor:pointer;padding:0 6px}
+#terminal-bar button:hover{color:#1a1a2e}
+#terminal{flex:1;padding:4px;background:#1a1a2e}
+
+/* ===== Toast ===== */
+#toast{position:fixed;bottom:24px;right:24px;background:#fff;border:1px solid #eef0f2;border-radius:12px;padding:14px 22px;font-size:13px;z-index:3000;display:none;max-width:400px;box-shadow:0 6px 24px rgba(0,0,0,.15)}
+#toast.show{display:block;animation:fadeIn .2s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ===== Forced credential change screen ===== */
+#change-creds-screen{position:fixed;inset:0;background:#f4f6f9;z-index:2000;display:none;align-items:center;justify-content:center;padding:24px}
+#change-creds-screen.open{display:flex}
+
+@media (max-width:768px){.dash-stat-card .stat-value{font-size:1.1rem}}
