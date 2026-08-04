@@ -5,6 +5,12 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-08-04
+
+### Fixed
+
+- Peers page no longer shows "No peers connected" when peers exist: `loadPeers()` referenced a `peer-count` element that only existed on the dashboard page, causing a TypeError that aborted rendering before the table was populated. The peers page now has its own peer-count badge, and the JS update is null-safe.
+
 ## [1.2.0] - 2026-08-03
 
 ### Added

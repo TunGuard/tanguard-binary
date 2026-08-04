@@ -5,7 +5,8 @@ async function loadPeers() {
   const status = await fetchAPI('/api/status');
   if (!status) return;
   const peers = status.peers || [];
-  document.getElementById('peer-count').textContent = peers.length;
+  const countEl = document.getElementById('peer-count');
+  if (countEl) countEl.textContent = peers.length;
 
   const tbody = document.getElementById('peers-tbody');
   if (peers.length === 0) {
