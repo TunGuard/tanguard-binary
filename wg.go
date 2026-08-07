@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
@@ -87,15 +88,15 @@ func (s *WgServer) RemovePeer(publicKeyHex string) error {
 }
 
 type PeerStatus struct {
-	PublicKey            string `json:"public_key"`
-	AllowedIPs           string `json:"allowed_ips"`
-	Endpoint             string `json:"endpoint"`
-	LastHandshakeSec     int64  `json:"last_handshake_sec"`
-	LastHandshakeNsec    int64  `json:"last_handshake_nsec"`
-	TxBytes              int64  `json:"tx_bytes"`
-	RxBytes              int64  `json:"rx_bytes"`
-	PersistentKeepalive  int    `json:"persistent_keepalive"`
-	ProtocolVersion      int    `json:"protocol_version"`
+	PublicKey           string `json:"public_key"`
+	AllowedIPs          string `json:"allowed_ips"`
+	Endpoint            string `json:"endpoint"`
+	LastHandshakeSec    int64  `json:"last_handshake_sec"`
+	LastHandshakeNsec   int64  `json:"last_handshake_nsec"`
+	TxBytes             int64  `json:"tx_bytes"`
+	RxBytes             int64  `json:"rx_bytes"`
+	PersistentKeepalive int    `json:"persistent_keepalive"`
+	ProtocolVersion     int    `json:"protocol_version"`
 }
 
 type DeviceStatus struct {
@@ -136,11 +137,16 @@ func (s *WgServer) SetPrivateKey(hexKey string) error {
 
 func (s *WgServer) LoadSavedPrivateKey() (string, error) {
 	privKey := s.cfg.PrivateKey
+	keyFile := s.cfg.DataDir + "/server_private.key"
 	if privKey == "" {
-		keyFile := s.cfg.DataDir + "/server_private.key"
 		data, err := readFile(keyFile)
 		if err == nil {
 			privKey = strings.TrimSpace(string(data))
+		} else if !os.IsNotExist(err) {
+			// The key file exists but is unreadable. Never rotate the key on
+			// an update/restart in this situation: doing so would invalidate
+			// every connected client. Fail loudly instead.
+			return "", fmt.Errorf("read saved private key %s: %w", keyFile, err)
 		}
 	}
 	if privKey == "" {
@@ -149,7 +155,6 @@ func (s *WgServer) LoadSavedPrivateKey() (string, error) {
 			return "", fmt.Errorf("generate key: %w", err)
 		}
 		privKey = hex.EncodeToString(priv)
-		keyFile := s.cfg.DataDir + "/server_private.key"
 		if err := writeFile(keyFile, []byte(privKey), 0600); err != nil {
 			log.Printf("[wg] WARNING: could not save private key: %v", err)
 		} else {

@@ -143,6 +143,10 @@ sudo systemctl enable tanguard
 sudo systemctl start tanguard
 ```
 
+### Updating to a new release
+
+Re-run the installer (`curl -fsSL ...installer.sh | bash`). On an existing install it only replaces the binary and **keeps your service configuration untouched** — your custom ports, subnet, and credentials stay exactly as you configured them. Your data in `DATA_DIR` is never modified, and the installer saves a safety backup of it to `/var/backups/` first.
+
 ## Configuration
 
 All settings are configured via environment variables.
@@ -174,11 +178,44 @@ go build -o tanguard .
 
 Requires Go 1.22+. The binary is statically linked — copy it to any Linux server.
 
+## Backups
+
+Updating TunGuard only replaces the binary — your peers, server key, dashboard login, and SSH host key are stored in `DATA_DIR` and are never touched by the installer or an update. Still, keep a backup before major changes.
+
+### Download a backup (web dashboard)
+
+Settings → **Backup & Restore** → **Download Backup** saves a `.tar.gz` containing:
+
+- `peers.json` — all peers (including client private keys for generated configs)
+- `server_private.key` — the server WireGuard key
+- `web_credentials.json` — the hashed dashboard login
+- `ssh_host_key` — the SSH gateway host key
+- `manifest.json` — backup metadata
+
+### Restore a backup
+
+Use the same **Restore Backup** button in Settings. Restoring:
+
+1. Validates the archive before touching anything.
+2. Replaces the state files in `DATA_DIR`.
+3. Applies the restored key and peers to the **running** server immediately (no restart required).
+
+If the restored server key differs from the current one, connected clients need to re-import their configs (the new server public key is shown after restore).
+
+Restoring never touches the binary, the systemd service, or your firewall rules.
+
+### CLI backup (terminal)
+
+```bash
+sudo tar -czf ~/tanguard-backup.tar.gz -C /var/lib/tanguard .
+```
+
 ## Security Notes
 
 - **Change the default passwords** (`WEB_PASSWORD`, `SSH_PASSWORD`) in production. The dashboard forces you to set a new web login on first use; use `tanguard --reset` if you ever lose it.
 - The web dashboard uses HTTP Basic Auth over plain HTTP by default. Put it behind a reverse proxy with TLS (e.g. Caddy, Nginx, or Traefik) for production use.
 - The SSH gateway uses password auth by default. Consider key-based auth for production.
+- Client private keys created by **Generate Config** are stored in `peers.json` (mode 0600, inside `DATA_DIR`) so configs can be re-downloaded / re-scanned from the dashboard. Manually added peers (public key only) have no stored client key.
 
 ## API Reference (curl)
 
@@ -198,6 +235,12 @@ curl -X POST http://localhost:9000/api/peer/add \
 curl -X POST http://localhost:9000/api/peer/generate-config \
   -H "Content-Type: application/json" \
   -d '{"device_name":"my-phone","server_host":"vpn.example.com"}'
+
+# Re-download / re-render the full config (with the client PrivateKey) for a
+# peer created via generate-config
+curl -X POST http://localhost:9000/api/peer/config \
+  -H "Content-Type: application/json" \
+  -d '{"public_key":"PEER_PUBKEY_HEX","server_host":"vpn.example.com"}'
 
 # Remove a peer
 curl -X POST http://localhost:9000/api/peer/remove \

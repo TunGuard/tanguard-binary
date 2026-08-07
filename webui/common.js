@@ -100,6 +100,36 @@ async function fetchAPI(path, opts) {
   }
 }
 
+async function restoreBackup(e) {
+  const input = e.target;
+  const file = input.files[0];
+  if (!file) return;
+  const resultEl = document.getElementById('backup-result');
+  if (resultEl) resultEl.innerHTML = '';
+  if (!confirm('Restore this backup? This replaces the current peers, server key, dashboard login and SSH host key, then applies them to the running server. If the server key differs from your current one, connected clients will need the updated config.')) {
+    input.value = '';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('backup', file);
+  const r = await fetchAPI('/api/backup/restore', {
+    method: 'POST',
+    body: fd
+  });
+  if (r && r.success) {
+    const msg = document.createElement('div');
+    msg.className = 'text-success';
+    msg.style.fontSize = '.9rem';
+    msg.textContent = 'Backup restored: ' + r.peer_count + ' peers, server key ' + (r.server_public_key ? r.server_public_key.substring(0, 12) + '…' : '');
+    if (resultEl) resultEl.appendChild(msg);
+    showToast('Backup restored', 'success');
+    setTimeout(() => location.reload(), 1500);
+  } else {
+    showToast('Restore failed: ' + (r?.error || 'unknown'), 'error');
+  }
+  input.value = '';
+}
+
 async function changeCredentials(e) {
   e.preventDefault();
   const f = e.target;

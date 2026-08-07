@@ -9,6 +9,8 @@ import (
 	"syscall"
 )
 
+const version = "1.3.0"
+
 func printUsage() {
 	fmt.Println("TunGuard - userspace WireGuard engine")
 	fmt.Println()

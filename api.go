@@ -47,7 +47,10 @@ func (a *API) Start() {
 	mux.HandleFunc("/api/peer/remove", a.handlePeerRemove)
 	mux.HandleFunc("/api/server_key", a.handleServerKey)
 	mux.HandleFunc("/api/peer/generate-config", a.handleGenerateConfig)
+	mux.HandleFunc("/api/peer/config", a.handlePeerConfig)
 	mux.HandleFunc("/api/configure", a.handleConfigure)
+	mux.HandleFunc("/api/backup/download", a.handleBackupDownload)
+	mux.HandleFunc("/api/backup/restore", a.handleBackupRestore)
 	mux.HandleFunc("/api/auth/status", a.handleAuthStatus)
 	mux.HandleFunc("/api/web/credentials", a.handleChangeCredentials)
 	mux.HandleFunc("/api/ws/ssh", a.handleWebSSH)
@@ -410,7 +413,7 @@ func (a *API) handleConfigure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResp(w, 200, map[string]interface{}{
-		"success":          true,
+		"success":           true,
 		"server_public_key": a.wg.PublicKey(),
 	})
 }
@@ -471,8 +474,11 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 	if rec != nil {
 		rec.DeviceID = req.DeviceID
 		rec.DeviceName = req.DeviceName
+		rec.ClientPrivateKey = clientPriv
 	}
-	a.store.Save()
+	if err := a.store.Save(); err != nil {
+		log.Printf("[api] WARNING: failed to persist peer: %v", err)
+	}
 
 	interfaceIP := strings.TrimSuffix(req.AllowedIP, "/32")
 	pub := a.wg.PublicKey()
@@ -482,15 +488,74 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[api] generated config for %s -> %s", req.AllowedIP, req.DeviceName)
 
 	jsonResp(w, 200, map[string]interface{}{
-		"success":           true,
+		"success":            true,
 		"client_private_key": clientPriv,
 		"client_public_key":  clientPub,
-		"allowed_ip":        req.AllowedIP,
-		"config":            config,
-		"server_host":       req.ServerHost,
-		"server_port":       a.cfg.ListenPort,
-		"device_id":         req.DeviceID,
-		"device_name":       req.DeviceName,
+		"allowed_ip":         req.AllowedIP,
+		"config":             config,
+		"server_host":        req.ServerHost,
+		"server_port":        a.cfg.ListenPort,
+		"device_id":          req.DeviceID,
+		"device_name":        req.DeviceName,
+	})
+}
+
+func (a *API) handlePeerConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonErr(w, 405, "POST required")
+		return
+	}
+
+	var req struct {
+		PublicKey  string `json:"public_key"`
+		ServerHost string `json:"server_host,omitempty"`
+		DNS        string `json:"dns,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, "invalid JSON")
+		return
+	}
+
+	req.PublicKey = strings.TrimSpace(req.PublicKey)
+	if req.PublicKey == "" {
+		jsonErr(w, 400, "public_key required")
+		return
+	}
+
+	rec := a.store.Get(req.PublicKey)
+	if rec == nil {
+		jsonErr(w, 404, "peer not found")
+		return
+	}
+	if rec.ClientPrivateKey == "" {
+		jsonErr(w, 409, "no client config stored for this peer; only peers created via Generate Config can be re-downloaded")
+		return
+	}
+
+	if req.ServerHost == "" {
+		req.ServerHost = r.Host
+		if h, _, err := net.SplitHostPort(req.ServerHost); err == nil {
+			req.ServerHost = h
+		}
+	}
+	if req.DNS == "" {
+		req.DNS = "1.1.1.1"
+	}
+
+	interfaceIP := strings.TrimSuffix(rec.AllowedIP, "/32")
+	pub := a.wg.PublicKey()
+	config := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\nEndpoint = %s:%d\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
+		HexToBase64(rec.ClientPrivateKey), interfaceIP, req.DNS, HexToBase64(pub), req.ServerHost, a.cfg.ListenPort)
+
+	jsonResp(w, 200, map[string]interface{}{
+		"success":     true,
+		"config":      config,
+		"allowed_ip":  rec.AllowedIP,
+		"server_host": req.ServerHost,
+		"server_port": a.cfg.ListenPort,
+		"device_id":   rec.DeviceID,
+		"device_name": rec.DeviceName,
+		"public_key":  rec.PublicKey,
 	})
 }
 

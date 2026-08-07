@@ -34,6 +34,7 @@ func (s *CredentialStore) Load() error {
 	data, err := os.ReadFile(s.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.creds = nil
 			return nil
 		}
 		return fmt.Errorf("read web credentials: %w", err)

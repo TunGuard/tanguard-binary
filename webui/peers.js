@@ -115,22 +115,16 @@ async function generateConfig(e) {
 }
 
 async function showPeerConfig(ip, pubkey, name) {
-  const status = await fetchAPI('/api/status');
-  if (!status) return;
-  const host = location.hostname;
-  const port = status.listen_port || 13231;
-  const srvPub = hexToBase64(status.server_public_key || '');
-  const config = `[Interface]
-Address = ${ip}/24
-DNS = 1.1.1.1
-
-[Peer]
-PublicKey = ${srvPub}
-Endpoint = ${host}:${port}
-AllowedIPs = 0.0.0.0/0, ::/0
-PersistentKeepalive = 25
-`;
-  displayConfig(config, name || ip);
+  const r = await fetchAPI('/api/peer/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ public_key: pubkey, server_host: location.hostname })
+  });
+  if (r && r.config) {
+    displayConfig(r.config, name || ip);
+  } else {
+    showToast('No config available for this peer: ' + (r?.error || 'unknown'), 'error');
+  }
 }
 
 function displayConfig(config, name) {

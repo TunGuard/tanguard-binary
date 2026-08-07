@@ -10,18 +10,20 @@ import (
 )
 
 type PeerRecord struct {
-	PublicKey    string    `json:"public_key"`
-	AllowedIP    string   `json:"allowed_ip"`
-	DeviceID     string   `json:"device_id,omitempty"`
-	DeviceName   string   `json:"device_name,omitempty"`
-	PreSharedKey string   `json:"preshared_key,omitempty"`
-	AddedAt      time.Time `json:"added_at"`
+	PublicKey        string    `json:"public_key"`
+	AllowedIP        string    `json:"allowed_ip"`
+	DeviceID         string    `json:"device_id,omitempty"`
+	DeviceName       string    `json:"device_name,omitempty"`
+	PreSharedKey     string    `json:"preshared_key,omitempty"`
+	ClientPrivateKey string    `json:"client_private_key,omitempty"`
+	AddedAt          time.Time `json:"added_at"`
 }
 
 type PeerStore struct {
-	mu      sync.RWMutex
-	peers   map[string]*PeerRecord
+	mu       sync.RWMutex
+	peers    map[string]*PeerRecord
 	filePath string
+	loaded   bool
 }
 
 func NewPeerStore(dataDir string) *PeerStore {
@@ -35,9 +37,11 @@ func (ps *PeerStore) Load() error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
+	ps.loaded = false
 	data, err := os.ReadFile(ps.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			ps.loaded = true
 			return nil
 		}
 		return fmt.Errorf("read peers file: %w", err)
@@ -48,14 +52,22 @@ func (ps *PeerStore) Load() error {
 		return fmt.Errorf("parse peers file: %w", err)
 	}
 
+	ps.peers = make(map[string]*PeerRecord, len(records))
 	for _, r := range records {
 		ps.peers[r.PublicKey] = r
 	}
+	ps.loaded = true
 	return nil
 }
 
 func (ps *PeerStore) Save() error {
 	ps.mu.RLock()
+	// Never overwrite an existing peers.json that we failed to load.
+	// This protects user state when the file is unreadable or corrupt.
+	if !ps.loaded {
+		ps.mu.RUnlock()
+		return nil
+	}
 	var records []*PeerRecord
 	for _, r := range ps.peers {
 		records = append(records, r)
@@ -74,9 +86,15 @@ func (ps *PeerStore) Save() error {
 	return os.Rename(tmp, ps.filePath)
 }
 
+// Add inserts a peer record, preserving the existing record untouched if a
+// peer with the same public key already exists. Never overwrites or regresses
+// existing peers (their AllowedIP, keys and timestamps stay intact).
 func (ps *PeerStore) Add(rec *PeerRecord) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	if _, ok := ps.peers[rec.PublicKey]; ok {
+		return
+	}
 	ps.peers[rec.PublicKey] = rec
 }
 

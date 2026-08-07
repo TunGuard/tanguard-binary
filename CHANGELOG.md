@@ -5,6 +5,21 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-07
+
+### Added
+
+- **Backup & Restore** from the web dashboard (Settings → Backup & Restore):
+  - `GET /api/backup/download` returns a `.tar.gz` of `peers.json`, `server_private.key`, `web_credentials.json`, and `ssh_host_key`.
+  - `POST /api/backup/restore` validates the archive, replaces the state files in `DATA_DIR`, and applies the restored key and peers to the running server without a restart.
+- The installer now makes a safety backup of `DATA_DIR` to `/var/backups/` before each install.
+
+### Changed
+
+- **Updates no longer touch user state.** The installer keeps an existing `/etc/systemd/system/tanguard.service` byte-for-byte and only replaces the binary, so custom ports, subnet, and credentials survive an update.
+- The server private key is never regenerated on a read error — only when it is genuinely missing.
+- `peers.json` is never overwritten with an empty file if it failed to load; duplicate peer adds no longer clobber the existing record.
+
 ## [1.2.1] - 2026-08-04
 
 ### Fixed
