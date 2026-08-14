@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -108,6 +109,18 @@ func (ps *PeerStore) Get(publicKey string) *PeerRecord {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	return ps.peers[publicKey]
+}
+
+func (ps *PeerStore) AllowedIPInUse(allowedIP string) bool {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	needle := strings.Split(allowedIP, "/")[0]
+	for _, r := range ps.peers {
+		if strings.Split(r.AllowedIP, "/")[0] == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func (ps *PeerStore) All() []*PeerRecord {

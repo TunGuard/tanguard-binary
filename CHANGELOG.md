@@ -5,6 +5,40 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-08-14
+
+### Added
+
+- **Completely redesigned web dashboard** with a custom Material Design-style
+  theme. The Bootstrap, AdminLTE, jQuery, and Font Awesome CDN dependencies are
+  gone — the dashboard now works fully offline, styled with a single bundled
+  `style.css`.
+- **Live server status panel in the sidebar** showing listen port, subnet, and
+  peer counts (total + online), with a peer-count badge on the Peers nav item.
+  It refreshes automatically every 10 seconds.
+- **Type-to-confirm peer removal.** Removing a peer now requires typing the
+  device name before the removal button becomes available, preventing
+  accidental deletions.
+- **XSS hardening** in the dashboard: all user-supplied values (device names,
+  public keys, endpoints) are HTML-escaped before rendering.
+
+### Changed
+
+- Peers are now applied to the WireGuard device **incrementally** via `IpcSet`
+  instead of a full `replace_peers` reconfiguration, so peer changes no longer
+  rebind the listening socket.
+- Peer add/remove and config generation are serialized on a mutex, and the API
+  now rejects duplicate public keys and already-assigned IPs with clear errors
+  instead of silently overwriting state.
+
+### Fixed
+
+- Adding or removing a peer no longer resets the session of every connected
+  device. Existing devices stay connected when a new device joins.
+- Duplicate client IPs are now rejected on peer add, and auto-assigned IPs are
+  allocated atomically, so a new device can no longer take over an IP that is
+  already in use by an older device.
+
 ## [1.3.0] - 2026-08-07
 
 ### Added

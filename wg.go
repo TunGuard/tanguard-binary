@@ -57,8 +57,6 @@ func (s *WgServer) Configure(privateKeyHex string, listenPort int) error {
 
 func (s *WgServer) ApplyAllPeers() error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "private_key=%s\n", s.privKey)
-	fmt.Fprintf(&b, "listen_port=%d\n", s.cfg.ListenPort)
 	fmt.Fprintf(&b, "replace_peers=true\n")
 
 	for _, rec := range s.store.All() {
@@ -66,6 +64,7 @@ func (s *WgServer) ApplyAllPeers() error {
 		if rec.PreSharedKey != "" {
 			fmt.Fprintf(&b, "preshared_key=%s\n", rec.PreSharedKey)
 		}
+		fmt.Fprintf(&b, "replace_allowed_ips=true\n")
 		fmt.Fprintf(&b, "allowed_ip=%s\n", rec.AllowedIP)
 	}
 
@@ -73,18 +72,17 @@ func (s *WgServer) ApplyAllPeers() error {
 }
 
 func (s *WgServer) AddPeer(publicKeyHex, allowedIP, pskHex string) error {
-	rec := &PeerRecord{
-		PublicKey:    publicKeyHex,
-		AllowedIP:    allowedIP,
-		PreSharedKey: pskHex,
+	var b strings.Builder
+	fmt.Fprintf(&b, "public_key=%s\n", publicKeyHex)
+	if pskHex != "" {
+		fmt.Fprintf(&b, "preshared_key=%s\n", pskHex)
 	}
-	s.store.Add(rec)
-	return s.ApplyAllPeers()
+	fmt.Fprintf(&b, "allowed_ip=%s\n", allowedIP)
+	return s.dev.IpcSet(b.String())
 }
 
 func (s *WgServer) RemovePeer(publicKeyHex string) error {
-	s.store.Remove(publicKeyHex)
-	return s.ApplyAllPeers()
+	return s.dev.IpcSet(fmt.Sprintf("public_key=%s\nremove=true\n", publicKeyHex))
 }
 
 type PeerStatus struct {

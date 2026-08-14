@@ -1,73 +1,59 @@
 const CURRENT_PAGE = document.body.dataset.page || 'dashboard';
 
-const NAV_ITEMS = [
-  { id: 'dashboard', href: 'index.html', icon: 'fa-tachometer-alt', label: 'Dashboard' },
-  { id: 'peers', href: 'peers.html', icon: 'fa-network-wired', label: 'Peers' },
-  { id: 'settings', href: 'settings.html', icon: 'fa-cogs', label: 'Settings' }
-];
+const NAV_ICONS = {
+  dashboard: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
+  peers: 'M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z',
+  settings: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z'
+};
 
-function layoutHTML() {
-  const nav = NAV_ITEMS.map(p => `
-    <li class="nav-item">
-      <a class="nav-link ${p.id === CURRENT_PAGE ? 'active' : ''}" href="${p.href}">
-        <i class="nav-icon fas ${p.icon}"></i><p>${p.label}</p>
-      </a>
-    </li>`).join('');
-  return `
-<nav class="main-header navbar navbar-expand navbar-white navbar-light">
-<ul class="navbar-nav">
-<li class="nav-item"><a class="nav-link" data-widget="pushmenu" href="#"><i class="fas fa-bars"></i></a></li>
-<li class="nav-item d-none d-sm-inline-block"><a class="nav-link" href="index.html">Home</a></li>
-</ul>
-<ul class="navbar-nav ml-auto">
-<li class="nav-item"><a class="nav-link" href="settings.html"><i class="fas fa-cog"></i></a></li>
-<li class="nav-item"><a class="nav-link" href="#" onclick="logout()"><i class="fas fa-sign-out-alt"></i></a></li>
-</ul>
-</nav>
-
-<aside class="main-sidebar sidebar-glass elevation-4">
-<a href="index.html" class="brand-link"><span class="brand-text font-weight-bold">TunGuard</span></a>
-<div class="sidebar">
-<nav class="mt-2">
-<ul class="nav nav-pills nav-sidebar flex-column">
-${nav}
-</ul>
-</nav>
-<div class="sidebar-logout"><a href="#" onclick="logout()">Logout</a></div>
-</div>
-</aside>
-
+document.body.insertAdjacentHTML('beforeend', `
 <div id="change-creds-screen">
-<div class="chart-card" style="max-width:420px;width:100%;border-radius:14px;border:none;box-shadow:0 10px 40px rgba(0,0,0,.15)">
-<div class="p-4">
-<h5 style="font-weight:800;color:#1a1a2e;">Set your dashboard login</h5>
-<p class="text-muted" style="font-size:.9rem;">For security you must change the default <code>admin</code> / <code>tanguard</code> login before using the dashboard.</p>
-<form class="web-login-form" onsubmit="changeCredentials(event)">
-<input class="form-control mb-2" name="username" placeholder="New username" required>
-<input class="form-control mb-2" name="password" type="password" placeholder="New password (min 8 chars)" required>
-<input class="form-control mb-3" name="confirm_password" type="password" placeholder="Confirm password" required>
-<button type="submit" class="btn btn-primary btn-block">Save &amp; Log In</button>
-</form>
-</div>
-</div>
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="login-logo-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg>
+      </div>
+      <div class="login-logo-text">TunGuard</div>
+    </div>
+    <h2 class="login-title">Set your dashboard login</h2>
+    <p class="login-sub">For security you must change the default <code>admin</code> / <code>tanguard</code> login before using the dashboard.</p>
+    <form class="web-login-form" onsubmit="changeCredentials(event)">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input class="form-control" name="username" placeholder="New username" required autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label class="form-label">New password (min 8 chars)</label>
+        <input class="form-control" name="password" type="password" placeholder="New password" required autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Confirm password</label>
+        <input class="form-control" name="confirm_password" type="password" placeholder="Confirm password" required autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Save &amp; Log In</button>
+    </form>
+  </div>
 </div>
 
-<div id="toast"></div>
-`;
+<div id="toast-container" class="toast-container"></div>
+`);
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('mobile-open');
 }
 
-document.querySelector('.wrapper').insertAdjacentHTML('afterbegin', layoutHTML());
-
 function showToast(msg, type) {
-  const t = document.getElementById('toast');
+  const t = document.createElement('div');
+  t.className = 'toast';
   t.textContent = msg;
-  t.style.borderLeft = '4px solid ' + (type === 'error' ? '#ef4444' : type === 'success' ? '#28a745' : '#007bff');
-  t.className = 'show';
-  setTimeout(() => t.className = '', 3000);
+  if (type === 'error') t.style.background = '#C5221F';
+  else if (type === 'success') t.style.background = '#188038';
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
 function logout() {
-  showToast('The dashboard uses HTTP Basic Auth. Close the browser or open a private window to sign out.', 'info');
+  showToast('The dashboard uses HTTP Basic Auth. Close the browser or open a private window to sign out.');
 }
 
 function formatBytes(b) {
@@ -85,6 +71,10 @@ function timeAgo(sec) {
   return new Date(sec * 1000).toLocaleDateString();
 }
 
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function hexToBase64(hex) {
   const b = new Uint8Array(hex.match(/.{1,2}/g).map(x => parseInt(x, 16)));
   return btoa(Array.from(b).map(x => String.fromCharCode(x)).join(''));
@@ -97,6 +87,32 @@ async function fetchAPI(path, opts) {
   } catch (e) {
     showToast('API error: ' + e.message, 'error');
     return null;
+  }
+}
+
+async function loadSidebarStatus() {
+  const list = document.getElementById('sidebarStatusList');
+  if (!list) return;
+  try {
+    const status = await fetchAPI('/api/status');
+    if (!status) { list.innerHTML = '<div class="sidebar-status-item"><span class="status-dot offline"></span><span>Status unavailable</span></div>'; return; }
+    const peers = status.peers || [];
+    const online = peers.filter(p => p.last_handshake_sec && (Date.now() / 1000 - p.last_handshake_sec) < 180).length;
+    const navBadge = document.getElementById('nav-peer-count');
+    if (navBadge) { navBadge.textContent = peers.length; navBadge.style.display = peers.length ? '' : 'none'; }
+    const rows = [
+      { label: 'Listen port', value: status.listen_port || '—' },
+      { label: 'Subnet', value: status.subnet || '—' },
+      { label: 'Peers', value: peers.length + ' total · ' + online + ' online' }
+    ];
+    list.innerHTML = rows.map(r => `
+      <div class="sidebar-status-item" title="${escapeHtml(r.value)}">
+        <span class="status-dot ${r.label === 'Peers' ? (online > 0 ? 'online' : 'offline') : 'info'}"></span>
+        <span class="sidebar-status-name">${escapeHtml(r.label)}</span>
+        <span class="sidebar-status-state">${escapeHtml(r.value)}</span>
+      </div>`).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="sidebar-status-item"><span class="status-dot offline"></span><span>Status unavailable</span></div>';
   }
 }
 
@@ -117,11 +133,7 @@ async function restoreBackup(e) {
     body: fd
   });
   if (r && r.success) {
-    const msg = document.createElement('div');
-    msg.className = 'text-success';
-    msg.style.fontSize = '.9rem';
-    msg.textContent = 'Backup restored: ' + r.peer_count + ' peers, server key ' + (r.server_public_key ? r.server_public_key.substring(0, 12) + '…' : '');
-    if (resultEl) resultEl.appendChild(msg);
+    if (resultEl) resultEl.innerHTML = '<div class="alert alert-success"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>Backup restored: ' + r.peer_count + ' peers, server key ' + (r.server_public_key ? r.server_public_key.substring(0, 12) + '…' : '') + '</div>';
     showToast('Backup restored', 'success');
     setTimeout(() => location.reload(), 1500);
   } else {
@@ -167,3 +179,5 @@ async function checkAuthStatus() {
 }
 
 checkAuthStatus();
+loadSidebarStatus();
+setInterval(loadSidebarStatus, 10000);

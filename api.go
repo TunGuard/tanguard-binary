@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type API struct {
 	store *PeerStore
 	cfg   *Config
 	creds *CredentialStore
+	ipMu  sync.Mutex
 }
 
 func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore) *API {
@@ -183,6 +185,13 @@ func jsonErr(w http.ResponseWriter, code int, msg string) {
 	jsonResp(w, code, map[string]string{"error": msg})
 }
 
+func shortKey(k string) string {
+	if len(k) > 8 {
+		return k[:8] + "..."
+	}
+	return k
+}
+
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, 200, map[string]string{"status": "ok"})
 }
@@ -314,22 +323,42 @@ func (a *API) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "invalid public_key: "+err.Error())
 		return
 	}
+	if _, _, err := net.ParseCIDR(req.AllowedIP); err != nil {
+		jsonErr(w, 400, "invalid allowed_ip: "+err.Error())
+		return
+	}
+
+	a.ipMu.Lock()
+	defer a.ipMu.Unlock()
+
+	if a.store.Get(req.PublicKey) != nil {
+		jsonErr(w, 409, "a peer with this public_key already exists")
+		return
+	}
+	if a.store.AllowedIPInUse(req.AllowedIP) {
+		jsonErr(w, 409, "allowed_ip already assigned to another peer: "+req.AllowedIP)
+		return
+	}
+
+	rec := &PeerRecord{
+		PublicKey:    req.PublicKey,
+		AllowedIP:    req.AllowedIP,
+		DeviceID:     req.DeviceID,
+		DeviceName:   req.DeviceName,
+		PreSharedKey: req.PresharedKey,
+		AddedAt:      time.Now(),
+	}
 
 	if err := a.wg.AddPeer(req.PublicKey, req.AllowedIP, req.PresharedKey); err != nil {
 		jsonErr(w, 500, "add peer to device: "+err.Error())
 		return
 	}
-
-	rec := a.store.Get(req.PublicKey)
-	if rec != nil {
-		rec.DeviceID = req.DeviceID
-		rec.DeviceName = req.DeviceName
-	}
+	a.store.Add(rec)
 	if err := a.store.Save(); err != nil {
 		log.Printf("[api] WARNING: failed to persist peer: %v", err)
 	}
 
-	log.Printf("[api] peer added: %s -> %s (device=%s)", req.PublicKey[:8]+"...", req.AllowedIP, req.DeviceID)
+	log.Printf("[api] peer added: %s -> %s (device=%s)", shortKey(req.PublicKey), req.AllowedIP, req.DeviceID)
 
 	jsonResp(w, 200, map[string]interface{}{
 		"success":    true,
@@ -359,16 +388,20 @@ func (a *API) handlePeerRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.ipMu.Lock()
 	if err := a.wg.RemovePeer(req.PublicKey); err != nil {
+		a.ipMu.Unlock()
 		jsonErr(w, 500, "remove peer: "+err.Error())
 		return
 	}
+	a.store.Remove(req.PublicKey)
+	a.ipMu.Unlock()
 
 	if err := a.store.Save(); err != nil {
 		log.Printf("[api] WARNING: failed to persist peer removal: %v", err)
 	}
 
-	log.Printf("[api] peer removed: %s", req.PublicKey[:8]+"...")
+	log.Printf("[api] peer removed: %s", shortKey(req.PublicKey))
 
 	jsonResp(w, 200, map[string]interface{}{
 		"success":    true,
@@ -437,15 +470,6 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.AllowedIP == "" {
-		ip, err := a.nextAvailableIP()
-		if err != nil {
-			jsonErr(w, 500, "no IP available: "+err.Error())
-			return
-		}
-		req.AllowedIP = ip.String() + "/32"
-	}
-
 	if req.ServerHost == "" {
 		req.ServerHost = r.Host
 		if h, _, err := net.SplitHostPort(req.ServerHost); err == nil {
@@ -465,20 +489,48 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 	clientPriv := hex.EncodeToString(privBytes)
 	clientPub := hex.EncodeToString(pubBytes)
 
-	if err := a.wg.AddPeer(clientPub, req.AllowedIP, ""); err != nil {
-		jsonErr(w, 500, "add peer: "+err.Error())
+	a.ipMu.Lock()
+	if req.AllowedIP == "" {
+		ip, err := a.nextAvailableIP()
+		if err != nil {
+			a.ipMu.Unlock()
+			jsonErr(w, 500, "no IP available: "+err.Error())
+			return
+		}
+		req.AllowedIP = ip.String() + "/32"
+	} else {
+		req.AllowedIP = strings.TrimSpace(req.AllowedIP)
+		if _, _, err := net.ParseCIDR(req.AllowedIP); err != nil {
+			a.ipMu.Unlock()
+			jsonErr(w, 400, "invalid allowed_ip: "+err.Error())
+			return
+		}
+	}
+	if a.store.AllowedIPInUse(req.AllowedIP) {
+		a.ipMu.Unlock()
+		jsonErr(w, 409, "allowed_ip already assigned to another peer: "+req.AllowedIP)
 		return
 	}
 
-	rec := a.store.Get(clientPub)
-	if rec != nil {
-		rec.DeviceID = req.DeviceID
-		rec.DeviceName = req.DeviceName
-		rec.ClientPrivateKey = clientPriv
+	rec := &PeerRecord{
+		PublicKey:        clientPub,
+		AllowedIP:        req.AllowedIP,
+		DeviceID:         req.DeviceID,
+		DeviceName:       req.DeviceName,
+		ClientPrivateKey: clientPriv,
+		AddedAt:          time.Now(),
 	}
+
+	if err := a.wg.AddPeer(clientPub, req.AllowedIP, ""); err != nil {
+		a.ipMu.Unlock()
+		jsonErr(w, 500, "add peer: "+err.Error())
+		return
+	}
+	a.store.Add(rec)
 	if err := a.store.Save(); err != nil {
 		log.Printf("[api] WARNING: failed to persist peer: %v", err)
 	}
+	a.ipMu.Unlock()
 
 	interfaceIP := strings.TrimSuffix(req.AllowedIP, "/32")
 	pub := a.wg.PublicKey()
