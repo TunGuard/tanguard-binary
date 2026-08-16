@@ -23,15 +23,16 @@ import (
 
 type SSHGateway struct {
 	cfg    *Config
+	creds  *CredentialStore
 	signer ssh.Signer
 }
 
-func NewSSHGateway(cfg *Config) (*SSHGateway, error) {
+func NewSSHGateway(cfg *Config, creds *CredentialStore) (*SSHGateway, error) {
 	signer, err := loadOrGenerateHostKey(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("ssh host key: %w", err)
 	}
-	return &SSHGateway{cfg: cfg, signer: signer}, nil
+	return &SSHGateway{cfg: cfg, creds: creds, signer: signer}, nil
 }
 
 func loadOrGenerateHostKey(cfg *Config) (ssh.Signer, error) {
@@ -64,10 +65,16 @@ func marshalED25519PrivateKey(priv ed25519.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privBytes})
 }
 
+// validCredentials authenticates against the same login the web dashboard
+// uses, so changing the dashboard password immediately applies to SSH access.
+func (g *SSHGateway) validCredentials(user, pass string) bool {
+	return g.creds.VerifyWeb(user, pass, g.cfg.WebUsername, g.cfg.WebPassword)
+}
+
 func (g *SSHGateway) Start() {
 	config := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			if c.User() == g.cfg.SSHUser && string(pass) == g.cfg.SSHPassword {
+			if g.validCredentials(c.User(), string(pass)) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("password rejected for %s", c.User())

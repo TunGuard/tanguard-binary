@@ -7,17 +7,29 @@
  * USAGE:
  *   require_once __DIR__ . '/tanguard_api.php';
  *
- *   $api = new TunGuardAPI();
+ *   $api = new TunGuardAPI('http://127.0.0.1:9000', 'YOUR_API_KEY');
  *   $api->addPeer($pubKey, $allowedIP, $deviceId);
  *   $api->removePeer($pubKey);
  *   $api->getServerPublicKey();
+ *
+ * The API key can also be set via the TUNGARD_API_KEY environment variable.
+ * If no key is given, the dashboard login (HTTP Basic Auth) is required to
+ * call every endpoint except /api/health, so supply the key in production.
  */
 
 class TunGuardAPI {
     private string $baseUrl;
+    private string $apiKey;
 
-    public function __construct(string $apiUrl = 'http://127.0.0.1:9000') {
+    public function __construct(string $apiUrl = 'http://127.0.0.1:9000', ?string $apiKey = null) {
         $this->baseUrl = rtrim($apiUrl, '/');
+        $envKey = getenv('TUNGARD_API_KEY');
+        $this->apiKey = $apiKey ?? ($envKey !== false ? $envKey : '');
+    }
+
+    private function authHeader(): string {
+        if ($this->apiKey === '') return '';
+        return 'X-API-Key: ' . $this->apiKey . "\r\n";
     }
 
     private function get(string $path): ?array {
@@ -26,7 +38,7 @@ class TunGuardAPI {
             'http' => [
                 'method' => 'GET',
                 'timeout' => 5,
-                'header' => "Content-Type: application/json\r\n",
+                'header' => "Content-Type: application/json\r\n" . $this->authHeader(),
             ],
         ]);
         $resp = @file_get_contents($url, false, $ctx);
@@ -41,7 +53,7 @@ class TunGuardAPI {
             'http' => [
                 'method' => 'POST',
                 'timeout' => 5,
-                'header' => "Content-Type: application/json\r\n",
+                'header' => "Content-Type: application/json\r\n" . $this->authHeader(),
                 'content' => $payload,
             ],
         ]);

@@ -126,10 +126,10 @@ This removes the stored login and restores the default `admin` / `tanguard`. Sta
 Enable with `-ssh` or `SSH_ENABLED=true`. This turns TunGuard into an SSH jump host so you can SSH into any connected peer through the server:
 
 ```bash
-ssh -J tanguard@yourserver:2222 root@10.100.0.2
+ssh -J admin@yourserver:2222 root@10.100.0.2
 ```
 
-Default SSH credentials: `tanguard` / `tanguard`.
+The SSH gateway authenticates with the **same login as the web dashboard** — if you change the username or password in **Settings → Dashboard Login**, the SSH access password changes with it. No separate `SSH_USER` / `SSH_PASSWORD` credentials are used.
 
 You can also SSH directly from the web dashboard — click the **SSH** button next to any online peer to open a browser terminal.
 
@@ -166,8 +166,8 @@ All settings are configured via environment variables.
 | `WEB_PASSWORD` | `tanguard` | Dashboard login password (only used until changed from the dashboard) |
 | `SSH_ENABLED` | `false` | Enable SSH gateway (or use `-ssh`) |
 | `SSH_LISTEN` | `:2222` | SSH gateway address |
-| `SSH_USER` | `tanguard` | SSH gateway username |
-| `SSH_PASSWORD` | `tanguard` | SSH gateway password |
+| `SSH_KEY_FILE` | auto | SSH host key path (auto-generated if missing) |
+| `TUNGARD_API_KEY` | — | API key for PHP / script integration (also settable per-request) |
 
 ## Building from Source
 
@@ -190,6 +190,7 @@ Settings → **Backup & Restore** → **Download Backup** saves a `.tar.gz` cont
 - `server_private.key` — the server WireGuard key
 - `web_credentials.json` — the hashed dashboard login
 - `ssh_host_key` — the SSH gateway host key
+- `api_key.json` — the API key
 - `manifest.json` — backup metadata
 
 ### Restore a backup
@@ -212,41 +213,64 @@ sudo tar -czf ~/tanguard-backup.tar.gz -C /var/lib/tanguard .
 
 ## Security Notes
 
-- **Change the default passwords** (`WEB_PASSWORD`, `SSH_PASSWORD`) in production. The dashboard forces you to set a new web login on first use; use `tanguard --reset` if you ever lose it.
+- **Change the default passwords** (`WEB_PASSWORD`) in production. The dashboard forces you to set a new web login on first use; use `tanguard --reset` if you ever lose it. The SSH gateway shares this login.
+- **Protect the API.** Every `/api/*` endpoint (except `/api/health`) now requires the dashboard login or an API key. Generate your API key in **Settings → API Key** and pass it as the `X-API-Key` header. Regenerate it any time it may have leaked.
 - The web dashboard uses HTTP Basic Auth over plain HTTP by default. Put it behind a reverse proxy with TLS (e.g. Caddy, Nginx, or Traefik) for production use.
 - The SSH gateway uses password auth by default. Consider key-based auth for production.
 - Client private keys created by **Generate Config** are stored in `peers.json` (mode 0600, inside `DATA_DIR`) so configs can be re-downloaded / re-scanned from the dashboard. Manually added peers (public key only) have no stored client key.
 
 ## API Reference (curl)
 
+All `/api/*` endpoints (except `/api/health`) require authentication. You can
+authenticate either with the **dashboard login** (`-u admin:password`) or with
+an **API key** from **Settings → API Key**, sent as the `X-API-Key` header (or
+`Authorization: Bearer <key>`).
+
+Get / regenerate your API key from the dashboard at **Settings → API Key**, or
+from the terminal:
+
 ```bash
+# Create / rotate the API key (dashboard login required)
+curl -X POST -u admin:PASSWORD http://localhost:9000/api/key/regenerate
+```
+
+Then call the API with the key:
+
+```bash
+API_KEY="REPLACE_WITH_YOUR_KEY"
+
 # Server info
-curl http://localhost:9000/api/health
-curl http://localhost:9000/api/status
-curl http://localhost:9000/api/server_key
-curl http://localhost:9000/api/peers
+curl -H "X-API-Key: $API_KEY" http://localhost:9000/api/status
+curl -H "X-API-Key: $API_KEY" http://localhost:9000/api/server_key
+curl -H "X-API-Key: $API_KEY" http://localhost:9000/api/peers
 
 # Add a peer with an existing key
 curl -X POST http://localhost:9000/api/peer/add \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"public_key":"PEER_PUBKEY_HEX","allowed_ip":"10.100.0.2/32","device_name":"my-device"}'
 
 # Auto-generate a new client config (server creates keypair)
 curl -X POST http://localhost:9000/api/peer/generate-config \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"device_name":"my-phone","server_host":"vpn.example.com"}'
 
 # Re-download / re-render the full config (with the client PrivateKey) for a
 # peer created via generate-config
 curl -X POST http://localhost:9000/api/peer/config \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"public_key":"PEER_PUBKEY_HEX","server_host":"vpn.example.com"}'
 
 # Remove a peer
 curl -X POST http://localhost:9000/api/peer/remove \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"public_key":"PEER_PUBKEY_HEX"}'
 ```
+
+`/api/health` stays open for uptime checks and exposes no sensitive data.
 
 See `INTEGRATION.md` for the WebSocket SSH protocol and PHP integration.
 

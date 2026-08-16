@@ -82,6 +82,17 @@ func (s *CredentialStore) Verify(username, password string) (valid, custom bool)
 	return true, true
 }
 
+// VerifyWeb reports whether the given username/password are valid for the
+// dashboard (and the SSH gateway, which shares the same login). Custom stored
+// credentials are used when present; otherwise the configured default web
+// login (fallbackUser/fallbackPass) is accepted.
+func (s *CredentialStore) VerifyWeb(username, password, fallbackUser, fallbackPass string) bool {
+	if valid, custom := s.Verify(username, password); custom {
+		return valid
+	}
+	return username == fallbackUser && password == fallbackPass
+}
+
 // Set stores new custom web dashboard credentials and persists them.
 func (s *CredentialStore) Set(username, password string) error {
 	if username == "" {

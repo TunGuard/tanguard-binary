@@ -28,6 +28,7 @@ func (a *API) backupStateFiles() []stateFile {
 		{name: "server_private.key", path: filepath.Join(a.cfg.DataDir, "server_private.key"), perm: 0600, required: true},
 		{name: "web_credentials.json", path: filepath.Join(a.cfg.DataDir, "web_credentials.json"), perm: 0600},
 		{name: "ssh_host_key", path: filepath.Join(a.cfg.DataDir, "ssh_host_key"), perm: 0600},
+		{name: "api_key.json", path: filepath.Join(a.cfg.DataDir, "api_key.json"), perm: 0600},
 	}
 }
 
@@ -162,6 +163,14 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if data, ok := readBackupFile(tmpDir, "api_key.json"); ok {
+		var k apiKeyRecord
+		if err := json.Unmarshal(data, &k); err != nil {
+			jsonErr(w, 400, "backup contains an invalid api_key.json: "+err.Error())
+			return
+		}
+	}
+
 	// --- Apply: write state files so a restart reproduces the backup exactly ---
 	for _, sf := range a.backupStateFiles() {
 		if data, ok := readBackupFile(tmpDir, sf.name); ok {
@@ -197,6 +206,9 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.creds.Load(); err != nil {
 		log.Printf("[backup] WARNING: reload credentials after restore: %v", err)
+	}
+	if err := a.apiKey.Load(); err != nil {
+		log.Printf("[backup] WARNING: reload API key after restore: %v", err)
 	}
 
 	log.Printf("[backup] state restored by %s (%d peers)", r.RemoteAddr, len(a.store.All()))

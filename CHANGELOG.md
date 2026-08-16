@@ -5,6 +5,30 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-08-16
+
+### Added
+
+- **API key authentication.** Every `/api/*` endpoint (except `/api/health`)
+  now requires either the dashboard login (HTTP Basic Auth) or a valid API key
+  sent as the `X-API-Key` header (or `Authorization: Bearer`). Previously the
+  API was completely open.
+- **API key management in the dashboard** (Settings → API Key): view, copy,
+  and regenerate the key. The key is stored in `api_key.json` inside `DATA_DIR`
+  (mode 0600) and regenerating immediately invalidates the old one.
+- The API key is included in **backup & restore**, so a restored backup also
+  restores the key in use at backup time.
+- The PHP helper (`tanguard_api.php`) now sends the API key via the
+  `TUNGARD_API_KEY` environment variable or the `TunGuardAPI` constructor
+  argument.
+
+### Changed
+
+- **The SSH gateway now authenticates with the same login as the web
+  dashboard.** Changing the username or password under Settings → Dashboard
+  Login immediately applies to SSH jump-host access too. The `SSH_USER` and
+  `SSH_PASSWORD` environment variables are no longer used.
+
 ## [2.0.0] - 2026-08-14
 
 ### Added

@@ -13,15 +13,16 @@ import (
 )
 
 type API struct {
-	wg    *WgServer
-	store *PeerStore
-	cfg   *Config
-	creds *CredentialStore
-	ipMu  sync.Mutex
+	wg     *WgServer
+	store  *PeerStore
+	cfg    *Config
+	creds  *CredentialStore
+	apiKey *APIKeyStore
+	ipMu   sync.Mutex
 }
 
-func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore) *API {
-	return &API{wg: wg, store: store, cfg: cfg, creds: creds}
+func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore, apiKeys *APIKeyStore) *API {
+	return &API{wg: wg, store: store, cfg: cfg, creds: creds, apiKey: apiKeys}
 }
 
 func (a *API) Start() {
@@ -43,23 +44,31 @@ func (a *API) Start() {
 	}
 
 	mux.HandleFunc("/api/health", a.handleHealth)
-	mux.HandleFunc("/api/status", a.handleStatus)
-	mux.HandleFunc("/api/peers", a.handlePeers)
-	mux.HandleFunc("/api/peer/add", a.handlePeerAdd)
-	mux.HandleFunc("/api/peer/remove", a.handlePeerRemove)
-	mux.HandleFunc("/api/server_key", a.handleServerKey)
-	mux.HandleFunc("/api/peer/generate-config", a.handleGenerateConfig)
-	mux.HandleFunc("/api/peer/config", a.handlePeerConfig)
-	mux.HandleFunc("/api/configure", a.handleConfigure)
-	mux.HandleFunc("/api/backup/download", a.handleBackupDownload)
-	mux.HandleFunc("/api/backup/restore", a.handleBackupRestore)
-	mux.HandleFunc("/api/auth/status", a.handleAuthStatus)
-	mux.HandleFunc("/api/web/credentials", a.handleChangeCredentials)
-	mux.HandleFunc("/api/ws/ssh", a.handleWebSSH)
+	mux.Handle("/api/system", a.requireAPI(a.handleSystem))
+	mux.Handle("/api/status", a.requireAPI(a.handleStatus))
+	mux.Handle("/api/peers", a.requireAPI(a.handlePeers))
+	mux.Handle("/api/peer/add", a.requireAPI(a.handlePeerAdd))
+	mux.Handle("/api/peer/remove", a.requireAPI(a.handlePeerRemove))
+	mux.Handle("/api/server_key", a.requireAPI(a.handleServerKey))
+	mux.Handle("/api/peer/generate-config", a.requireAPI(a.handleGenerateConfig))
+	mux.Handle("/api/peer/config", a.requireAPI(a.handlePeerConfig))
+	mux.Handle("/api/configure", a.requireAPI(a.handleConfigure))
+	mux.Handle("/api/backup/download", a.requireAPI(a.handleBackupDownload))
+	mux.Handle("/api/backup/restore", a.requireAPI(a.handleBackupRestore))
+	mux.Handle("/api/auth/status", a.requireDashboardAuth(a.handleAuthStatus))
+	mux.Handle("/api/web/credentials", a.requireDashboardAuth(a.handleChangeCredentials))
+	mux.Handle("/api/key", a.requireDashboardAuth(a.handleAPIKey))
+	mux.Handle("/api/key/regenerate", a.requireDashboardAuth(a.handleAPIKeyRegenerate))
+	mux.Handle("/api/ws/ssh", a.requireAPI(a.handleWebSSH))
 
 	handler := corsMiddleware(logMiddleware(mux))
 
 	log.Printf("[api] listening on %s", a.cfg.APIListen)
+	if a.apiKey != nil && a.apiKey.Exists() {
+		log.Printf("[api] API authentication: dashboard login or API key (X-API-Key header)")
+	} else {
+		log.Printf("[api] API authentication: dashboard login (no API key set yet; generate one in Settings)")
+	}
 	if err := http.ListenAndServe(a.cfg.APIListen, handler); err != nil {
 		log.Fatalf("[api] server failed: %v", err)
 	}
@@ -77,10 +86,50 @@ func (a *API) authenticated(r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	if valid, custom := a.creds.Verify(user, pass); custom {
-		return valid
+	return a.creds.VerifyWeb(user, pass, a.cfg.WebUsername, a.cfg.WebPassword)
+}
+
+// apiAuthorized accepts the dashboard login (HTTP Basic Auth) or a valid API
+// key sent as either the X-API-Key header or an Authorization: Bearer header.
+func (a *API) apiAuthorized(r *http.Request) bool {
+	if a.authenticated(r) {
+		return true
 	}
-	return user == a.cfg.WebUsername && pass == a.cfg.WebPassword
+	if a.apiKey == nil {
+		return false
+	}
+	if k := r.Header.Get("X-API-Key"); k != "" && a.apiKey.Verify(k) {
+		return true
+	}
+	authz := r.Header.Get("Authorization")
+	if strings.HasPrefix(authz, "Bearer ") && a.apiKey.Verify(strings.TrimPrefix(authz, "Bearer ")) {
+		return true
+	}
+	return false
+}
+
+// requireAPI guards API endpoints with either the dashboard login or the API key.
+func (a *API) requireAPI(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.apiAuthorized(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="TunGuard"`)
+			jsonErr(w, 401, "unauthorized: valid dashboard login or API key required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// requireDashboardAuth guards dashboard-management endpoints (credential / API
+// key management) with the dashboard login only, never the API key.
+func (a *API) requireDashboardAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.authenticated(r) {
+			requireBasicAuth(w)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (a *API) usingDefaultWebCreds() bool {
@@ -96,10 +145,6 @@ func requireBasicAuth(w http.ResponseWriter) {
 }
 
 func (a *API) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
-	if !a.authenticated(r) {
-		requireBasicAuth(w)
-		return
-	}
 	jsonResp(w, 200, map[string]interface{}{
 		"authenticated": true,
 		"username":      a.effectiveWebUsername(),
@@ -110,10 +155,6 @@ func (a *API) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		jsonErr(w, 405, "POST required")
-		return
-	}
-	if !a.authenticated(r) {
-		requireBasicAuth(w)
 		return
 	}
 
@@ -154,11 +195,56 @@ func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAPIKey returns the current API key (for display in the dashboard).
+// Requires the dashboard login; never the API key itself.
+func (a *API) handleAPIKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		jsonErr(w, 405, "GET required")
+		return
+	}
+	key, ok := a.apiKey.Key()
+	if !ok {
+		jsonResp(w, 200, map[string]interface{}{
+			"exists": false,
+			"key":    "",
+		})
+		return
+	}
+	resp := map[string]interface{}{
+		"exists": true,
+		"key":    key,
+	}
+	if ts, ok := a.apiKey.CreatedAt(); ok {
+		resp["created_at"] = ts.Format(time.RFC3339)
+	}
+	jsonResp(w, 200, resp)
+}
+
+// handleAPIKeyRegenerate creates a new API key, invalidating the old one.
+// Requires the dashboard login; never the API key itself.
+func (a *API) handleAPIKeyRegenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonErr(w, 405, "POST required")
+		return
+	}
+	key, err := a.apiKey.Generate()
+	if err != nil {
+		jsonErr(w, 500, "failed to generate API key: "+err.Error())
+		return
+	}
+	log.Printf("[api] API key regenerated by %q", a.effectiveWebUsername())
+	jsonResp(w, 200, map[string]interface{}{
+		"success":    true,
+		"key":        key,
+		"created_at": time.Now().Format(time.RFC3339),
+	})
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(200)
 			return
@@ -194,6 +280,10 @@ func shortKey(k string) string {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, 200, map[string]string{"status": "ok"})
+}
+
+func (a *API) handleSystem(w http.ResponseWriter, r *http.Request) {
+	jsonResp(w, 200, collectSystemStats(a.cfg.DataDir))
 }
 
 func (a *API) handleServerKey(w http.ResponseWriter, r *http.Request) {

@@ -178,6 +178,46 @@ async function checkAuthStatus() {
   }
 }
 
+async function loadAPIKey() {
+  const input = document.getElementById('api-key-input');
+  if (!input) return;
+  const r = await fetchAPI('/api/key');
+  if (r && r.key) {
+    input.value = r.key;
+  } else {
+    input.value = '';
+  }
+}
+
+function copyAPIKey() {
+  const input = document.getElementById('api-key-input');
+  if (!input || !input.value) return;
+  navigator.clipboard.writeText(input.value).then(() => {
+    showToast('API key copied', 'success');
+  }).catch(() => {
+    input.select();
+    document.execCommand('copy');
+    showToast('API key copied', 'success');
+  });
+}
+
+async function regenerateAPIKey() {
+  if (!confirm('Regenerate the API key? Existing integrations using the current key will stop working immediately.')) return;
+  const r = await fetchAPI('/api/key/regenerate', {
+    method: 'POST'
+  });
+  const resultEl = document.getElementById('api-key-result');
+  if (r && r.key) {
+    document.getElementById('api-key-input').value = r.key;
+    if (resultEl) resultEl.innerHTML = '<div class="alert alert-success"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>API key regenerated on ' + new Date(r.created_at).toLocaleString() + '. Update any integrations that use the old key.</div>';
+    showToast('API key regenerated', 'success');
+  } else {
+    if (resultEl) resultEl.innerHTML = '<div class="alert alert-danger"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>' + (r?.error || 'unknown error') + '</div>';
+    showToast('Failed to regenerate API key: ' + (r?.error || 'unknown'), 'error');
+  }
+}
+
 checkAuthStatus();
 loadSidebarStatus();
+loadAPIKey();
 setInterval(loadSidebarStatus, 10000);

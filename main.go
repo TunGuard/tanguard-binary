@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-const version = "1.3.0"
+const version = "2.1.0"
 
 func printUsage() {
 	fmt.Println("TunGuard - userspace WireGuard engine")
@@ -73,6 +73,11 @@ func main() {
 		log.Printf("[main] WARNING: could not load web credentials: %v", err)
 	}
 
+	apiKeys := NewAPIKeyStore(cfg.DataDir)
+	if err := apiKeys.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load API key: %v", err)
+	}
+
 	if *webFlag {
 		cfg.WebEnabled = true
 	}
@@ -121,11 +126,11 @@ func main() {
 
 	setupNAT(cfg)
 
-	api := NewAPI(wg, store, cfg, creds)
+	api := NewAPI(wg, store, cfg, creds, apiKeys)
 	go api.Start()
 
 	if cfg.SSHEnabled {
-		sshGW, err := NewSSHGateway(cfg)
+		sshGW, err := NewSSHGateway(cfg, creds)
 		if err != nil {
 			log.Printf("[main] WARNING: SSH gateway init failed: %v", err)
 		} else {
