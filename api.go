@@ -4,9 +4,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -60,8 +65,12 @@ func (a *API) Start() {
 	mux.Handle("/api/key", a.requireDashboardAuth(a.handleAPIKey))
 	mux.Handle("/api/key/regenerate", a.requireDashboardAuth(a.handleAPIKeyRegenerate))
 	mux.Handle("/api/ws/ssh", a.requireAPI(a.handleWebSSH))
+	mux.Handle("/api/version", a.requireAPI(a.handleVersion))
+	mux.Handle("/api/update", a.requireAPI(a.handleUpdate))
 
 	handler := corsMiddleware(logMiddleware(mux))
+
+	a.startVersionChecker()
 
 	log.Printf("[api] listening on %s", a.cfg.APIListen)
 	if a.apiKey != nil && a.apiKey.Exists() {
@@ -112,7 +121,6 @@ func (a *API) apiAuthorized(r *http.Request) bool {
 func (a *API) requireAPI(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !a.apiAuthorized(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="TunGuard"`)
 			jsonErr(w, 401, "unauthorized: valid dashboard login or API key required")
 			return
 		}
@@ -738,4 +746,233 @@ func nextIP(ip net.IP) net.IP {
 		}
 	}
 	return n
+}
+
+const githubRepo = "TunGuard/tanguard-binary"
+
+func goArch() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "amd64"
+	case "arm64":
+		return "arm64"
+	case "386":
+		return "386"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+type githubRelease struct {
+	TagName string        `json:"tag_name"`
+	Body    string        `json:"body"`
+	HTMLURL string        `json:"html_url"`
+	Assets  []githubAsset `json:"assets"`
+}
+
+type githubAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Size               int64  `json:"size"`
+}
+
+type cachedVersion struct {
+	mu              sync.RWMutex
+	latestVersion   string
+	downloadURL     string
+	releaseNotes    string
+	releaseURL      string
+	updateAvailable bool
+	lastCheck       time.Time
+	checking        bool
+}
+
+var versionCache cachedVersion
+
+func (a *API) startVersionChecker() {
+	go func() {
+		a.checkGitHubRelease()
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			a.checkGitHubRelease()
+		}
+	}()
+}
+
+func (a *API) checkGitHubRelease() {
+	versionCache.mu.Lock()
+	if versionCache.checking {
+		versionCache.mu.Unlock()
+		return
+	}
+	versionCache.checking = true
+	versionCache.mu.Unlock()
+
+	defer func() {
+		versionCache.mu.Lock()
+		versionCache.checking = false
+		versionCache.mu.Unlock()
+	}()
+
+	current := version
+	resp, err := http.Get("https://api.github.com/repos/" + githubRepo + "/releases/latest")
+	if err != nil {
+		log.Printf("[version] check failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		log.Printf("[version] github returned HTTP %d", resp.StatusCode)
+		return
+	}
+
+	var release githubRelease
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[version] read body: %v", err)
+		return
+	}
+	if err := json.Unmarshal(body, &release); err != nil {
+		log.Printf("[version] parse json: %v", err)
+		return
+	}
+
+	latest := strings.TrimPrefix(release.TagName, "v")
+	if latest == "" || latest == current {
+		versionCache.mu.Lock()
+		versionCache.latestVersion = latest
+		versionCache.updateAvailable = false
+		versionCache.lastCheck = time.Now()
+		versionCache.mu.Unlock()
+		log.Printf("[version] current=%s latest=%s (up to date)", current, latest)
+		return
+	}
+
+	archName := "tanguard-linux-" + goArch()
+	var dlURL string
+	for _, asset := range release.Assets {
+		if asset.Name == archName {
+			dlURL = asset.BrowserDownloadURL
+			break
+		}
+	}
+
+	versionCache.mu.Lock()
+	versionCache.latestVersion = latest
+	versionCache.downloadURL = dlURL
+	versionCache.releaseNotes = release.Body
+	versionCache.releaseURL = release.HTMLURL
+	versionCache.updateAvailable = dlURL != ""
+	versionCache.lastCheck = time.Now()
+	versionCache.mu.Unlock()
+	log.Printf("[version] current=%s latest=%s update=%v", current, latest, dlURL != "")
+}
+
+func (a *API) handleVersion(w http.ResponseWriter, r *http.Request) {
+	versionCache.mu.RLock()
+	defer versionCache.mu.RUnlock()
+
+	jsonResp(w, 200, map[string]interface{}{
+		"current_version":  version,
+		"latest_version":   versionCache.latestVersion,
+		"update_available":  versionCache.updateAvailable,
+		"download_url":     versionCache.downloadURL,
+		"release_notes":    versionCache.releaseNotes,
+		"release_url":      versionCache.releaseURL,
+		"arch":             goArch(),
+		"last_checked":     versionCache.lastCheck.Format(time.RFC3339),
+	})
+}
+
+var updateMu sync.Mutex
+
+func (a *API) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, 405, "POST required")
+		return
+	}
+
+	if !updateMu.TryLock() {
+		jsonErr(w, 409, "update already in progress")
+		return
+	}
+	defer updateMu.Unlock()
+
+	var req struct {
+		DownloadURL string `json:"download_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DownloadURL == "" {
+		jsonErr(w, 400, "download_url required")
+		return
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		jsonErr(w, 500, "cannot find executable path: "+err.Error())
+		return
+	}
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		jsonErr(w, 500, "cannot resolve executable: "+err.Error())
+		return
+	}
+
+	log.Printf("[update] downloading %s", req.DownloadURL)
+	resp, err := http.Get(req.DownloadURL)
+	if err != nil {
+		jsonErr(w, 502, "download failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		jsonErr(w, 502, fmt.Sprintf("download returned HTTP %d", resp.StatusCode))
+		return
+	}
+
+	tmpPath := exePath + ".tmp"
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		jsonErr(w, 500, "cannot create temp file: "+err.Error())
+		return
+	}
+	written, err := io.Copy(out, resp.Body)
+	out.Close()
+	if err != nil {
+		os.Remove(tmpPath)
+		jsonErr(w, 500, "download write failed: "+err.Error())
+		return
+	}
+	if written < 100000 {
+		os.Remove(tmpPath)
+		jsonErr(w, 502, "downloaded file too small ("+fmt.Sprintf("%d", written)+" bytes), aborting")
+		return
+	}
+
+	log.Printf("[update] downloaded %d bytes to %s, replacing %s", written, tmpPath, exePath)
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		os.Remove(tmpPath)
+		jsonErr(w, 500, "replace binary failed: "+err.Error())
+		return
+	}
+
+	log.Printf("[update] binary replaced, restarting process")
+
+	jsonResp(w, 200, map[string]interface{}{
+		"success": true,
+		"message": "Update installed. Server is restarting.",
+	})
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		cmd := exec.Command(exePath, os.Args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Start(); err != nil {
+			log.Printf("[update] restart failed: %v", err)
+			return
+		}
+		os.Exit(0)
+	}()
 }

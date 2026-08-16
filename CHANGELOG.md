@@ -5,6 +5,35 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-08-16
+
+### Added
+
+- **Network traffic graph on the dashboard.** The System card now shows a
+  real-time Chart.js line graph tracking RX/TX rates for tun0, wgo, and eth0
+  interfaces, with up to 60 data points (10 minutes at 10-second intervals).
+- Network interfaces are now filtered to show only **tun0, wgo, and eth0**
+  instead of every interface on the host.
+- **In-app update checker.** The topbar shows a version badge that
+  auto-checks GitHub releases every hour in a background goroutine with zero
+  request-path latency. Clicking the badge opens a modal with release notes
+  and a one-click install button that downloads the correct architecture
+  binary, replaces the running executable, and restarts the server.
+
+### Fixed
+
+- **Dashboard no longer spams "unauthorized" error toasts.** Removed the
+  `WWW-Authenticate` header from API 401 responses, which was causing the
+  browser to clear its cached Basic Auth credentials on transient failures,
+  creating an auth-loop. `fetchAPI` now silently returns `null` on non-200
+  responses; all callers already handle this gracefully.
+- **SSH direct-tcpip now handles IPv6 addresses correctly.** The connection
+  target is formatted with `net.JoinHostPort` instead of `fmt.Sprintf("%s:%d")`,
+  which produced invalid addresses for IPv6 hosts.
+- **SSH WebSocket reconnect no longer leaks sessions.** Starting a new SSH
+  session via the WebSocket terminal now properly closes the previous session
+  and stdin pipe before creating new ones.
+
 ## [2.1.0] - 2026-08-16
 
 ### Added

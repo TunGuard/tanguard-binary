@@ -83,9 +83,9 @@ function hexToBase64(hex) {
 async function fetchAPI(path, opts) {
   try {
     const r = await fetch(path, opts);
+    if (!r.ok) return null;
     return await r.json();
   } catch (e) {
-    showToast('API error: ' + e.message, 'error');
     return null;
   }
 }

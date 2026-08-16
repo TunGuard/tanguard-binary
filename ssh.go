@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -125,7 +126,7 @@ func (g *SSHGateway) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 func (g *SSHGateway) handleDirectTCPIP(newChannel ssh.NewChannel) {
 	payload := newChannel.ExtraData()
 	host, port := parseDirectTCPIPPayload(payload)
-	target := fmt.Sprintf("%s:%d", host, port)
+	target := net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
 
 	channel, reqs, err := newChannel.Accept()
 	if err != nil {
@@ -325,6 +326,15 @@ func (a *API) startSSHSession(ws *websocket.Conn, target, user, pass string, ses
 		sess.Close()
 		client.Close()
 		return fmt.Errorf("SSH shell: %w", err)
+	}
+
+	if *session != nil {
+		(*session).Close()
+		*session = nil
+	}
+	if *stdin != nil {
+		(*stdin).Close()
+		*stdin = nil
 	}
 
 	*stdin = wStdin
