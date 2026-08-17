@@ -25,6 +25,9 @@ type Config struct {
 	SSHEnabled  bool
 	SSHListen   string
 	SSHKeyFile  string
+
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 func loadConfig() *Config {
@@ -48,6 +51,9 @@ func loadConfig() *Config {
 		SSHEnabled:  envStr("SSH_ENABLED", "false") == "true",
 		SSHListen:   envStr("SSH_LISTEN", ":2222"),
 		SSHKeyFile:  envStr("SSH_KEY_FILE", ""),
+
+		TLSCertFile: envStr("TLS_CERT_FILE", ""),
+		TLSKeyFile:  envStr("TLS_KEY_FILE", ""),
 	}
 }
 

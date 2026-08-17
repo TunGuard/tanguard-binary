@@ -83,6 +83,8 @@ async function loadDashboard() {
   (status.peers || []).forEach(p => { tx += p.tx_bytes || 0; rx += p.rx_bytes || 0; });
   document.getElementById('total-tx').textContent = formatBytes(tx);
   document.getElementById('total-rx').textContent = formatBytes(rx);
+
+  renderSidebarStatus(status);
 }
 
 function meterRow(label, value, percent, state) {

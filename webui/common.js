@@ -82,6 +82,8 @@ function hexToBase64(hex) {
 
 async function fetchAPI(path, opts) {
   try {
+    if (!opts) opts = {};
+    if (!opts.credentials) opts.credentials = 'same-origin';
     const r = await fetch(path, opts);
     if (!r.ok) return null;
     return await r.json();
@@ -96,24 +98,30 @@ async function loadSidebarStatus() {
   try {
     const status = await fetchAPI('/api/status');
     if (!status) { list.innerHTML = '<div class="sidebar-status-item"><span class="status-dot offline"></span><span>Status unavailable</span></div>'; return; }
-    const peers = status.peers || [];
-    const online = peers.filter(p => p.last_handshake_sec && (Date.now() / 1000 - p.last_handshake_sec) < 180).length;
-    const navBadge = document.getElementById('nav-peer-count');
-    if (navBadge) { navBadge.textContent = peers.length; navBadge.style.display = peers.length ? '' : 'none'; }
-    const rows = [
-      { label: 'Listen port', value: status.listen_port || '—' },
-      { label: 'Subnet', value: status.subnet || '—' },
-      { label: 'Peers', value: peers.length + ' total · ' + online + ' online' }
-    ];
-    list.innerHTML = rows.map(r => `
-      <div class="sidebar-status-item" title="${escapeHtml(r.value)}">
-        <span class="status-dot ${r.label === 'Peers' ? (online > 0 ? 'online' : 'offline') : 'info'}"></span>
-        <span class="sidebar-status-name">${escapeHtml(r.label)}</span>
-        <span class="sidebar-status-state">${escapeHtml(r.value)}</span>
-      </div>`).join('');
+    renderSidebarStatus(status);
   } catch (e) {
     list.innerHTML = '<div class="sidebar-status-item"><span class="status-dot offline"></span><span>Status unavailable</span></div>';
   }
+}
+
+function renderSidebarStatus(status) {
+  const list = document.getElementById('sidebarStatusList');
+  if (!list) return;
+  const peers = status.peers || [];
+  const online = peers.filter(p => p.last_handshake_sec && (Date.now() / 1000 - p.last_handshake_sec) < 180).length;
+  const navBadge = document.getElementById('nav-peer-count');
+  if (navBadge) { navBadge.textContent = peers.length; navBadge.style.display = peers.length ? '' : 'none'; }
+  const rows = [
+    { label: 'Listen port', value: status.listen_port || '—' },
+    { label: 'Subnet', value: status.subnet || '—' },
+    { label: 'Peers', value: peers.length + ' total · ' + online + ' online' }
+  ];
+  list.innerHTML = rows.map(r => `
+    <div class="sidebar-status-item" title="${escapeHtml(r.value)}">
+      <span class="status-dot ${r.label === 'Peers' ? (online > 0 ? 'online' : 'offline') : 'info'}"></span>
+      <span class="sidebar-status-name">${escapeHtml(r.label)}</span>
+      <span class="sidebar-status-state">${escapeHtml(r.value)}</span>
+    </div>`).join('');
 }
 
 async function restoreBackup(e) {
@@ -220,4 +228,4 @@ async function regenerateAPIKey() {
 checkAuthStatus();
 loadSidebarStatus();
 loadAPIKey();
-setInterval(loadSidebarStatus, 10000);
+if (CURRENT_PAGE !== 'dashboard') setInterval(loadSidebarStatus, 10000);

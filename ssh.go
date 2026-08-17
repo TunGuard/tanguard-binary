@@ -218,14 +218,26 @@ func (a *API) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(64 * 1024)
+
+	var writeMu sync.Mutex
+	wsWrite := func(msg wsSSHMsg) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		conn.WriteJSON(msg)
+	}
 
 	var target, sshUser, sshPass string
 	var session *ssh.Session
 	var stdin io.WriteCloser
+	var sshClient *ssh.Client
 
 	defer func() {
 		if session != nil {
 			session.Close()
+		}
+		if sshClient != nil {
+			sshClient.Close()
 		}
 	}()
 
@@ -248,13 +260,13 @@ func (a *API) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 				sshPass = msg.Password
 
 				if sshUser == "" || sshPass == "" {
-					conn.WriteJSON(wsSSHMsg{Type: "auth"})
+					wsWrite(wsSSHMsg{Type: "auth"})
 					continue
 				}
 
-				if err := a.startSSHSession(conn, target, sshUser, sshPass, &session, &stdin); err != nil {
-					conn.WriteJSON(wsSSHMsg{Type: "error", Message: err.Error()})
-					conn.WriteJSON(wsSSHMsg{Type: "closed"})
+				if err := a.startSSHSession(conn, target, sshUser, sshPass, &session, &stdin, &sshClient, &writeMu); err != nil {
+					wsWrite(wsSSHMsg{Type: "error", Message: err.Error()})
+					wsWrite(wsSSHMsg{Type: "closed"})
 					return
 				}
 			}
@@ -267,9 +279,9 @@ func (a *API) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 				sshPass = msg.Password
 			}
 			if sshUser != "" && sshPass != "" && target != "" {
-				if err := a.startSSHSession(conn, target, sshUser, sshPass, &session, &stdin); err != nil {
-					conn.WriteJSON(wsSSHMsg{Type: "error", Message: err.Error()})
-					conn.WriteJSON(wsSSHMsg{Type: "closed"})
+				if err := a.startSSHSession(conn, target, sshUser, sshPass, &session, &stdin, &sshClient, &writeMu); err != nil {
+					wsWrite(wsSSHMsg{Type: "error", Message: err.Error()})
+					wsWrite(wsSSHMsg{Type: "closed"})
 					return
 				}
 			}
@@ -287,7 +299,13 @@ func (a *API) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) startSSHSession(ws *websocket.Conn, target, user, pass string, session **ssh.Session, stdin *io.WriteCloser) error {
+func (a *API) startSSHSession(ws *websocket.Conn, target, user, pass string, session **ssh.Session, stdin *io.WriteCloser, sshClient **ssh.Client, writeMu *sync.Mutex) error {
+	wsWrite := func(msg wsSSHMsg) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		ws.WriteJSON(msg)
+	}
+
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
@@ -336,9 +354,14 @@ func (a *API) startSSHSession(ws *websocket.Conn, target, user, pass string, ses
 		(*stdin).Close()
 		*stdin = nil
 	}
+	if *sshClient != nil {
+		(*sshClient).Close()
+		*sshClient = nil
+	}
 
 	*stdin = wStdin
 	*session = sess
+	*sshClient = client
 
 	go func() {
 		buf := make([]byte, 4096)
@@ -347,7 +370,7 @@ func (a *API) startSSHSession(ws *websocket.Conn, target, user, pass string, ses
 			if err != nil {
 				break
 			}
-			ws.WriteJSON(wsSSHMsg{Type: "output", Data: string(buf[:n])})
+			wsWrite(wsSSHMsg{Type: "output", Data: string(buf[:n])})
 		}
 	}()
 
@@ -358,13 +381,13 @@ func (a *API) startSSHSession(ws *websocket.Conn, target, user, pass string, ses
 			if err != nil {
 				break
 			}
-			ws.WriteJSON(wsSSHMsg{Type: "output", Data: string(buf[:n])})
+			wsWrite(wsSSHMsg{Type: "output", Data: string(buf[:n])})
 		}
 	}()
 
 	go func() {
 		sess.Wait()
-		ws.WriteJSON(wsSSHMsg{Type: "closed"})
+		wsWrite(wsSSHMsg{Type: "closed"})
 		client.Close()
 	}()
 

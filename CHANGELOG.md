@@ -5,6 +5,44 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-08-17
+
+### Added
+
+- **TLS/HTTPS support.** Set `TLS_CERT_FILE` and `TLS_KEY_FILE` environment
+  variables to serve the API and web dashboard over HTTPS. When unset, the
+  server falls back to plain HTTP.
+
+### Changed
+
+- **CPU percent is now sampled in a background goroutine** every 3 seconds
+  instead of blocking the request handler for up to 250 ms on every
+  `/api/system` call.
+- **Dashboard status polling is conditional.** The sidebar status interval is
+  only active on non-dashboard pages; the dashboard's own `loadDashboard()`
+  reads the same cached status directly, eliminating duplicate `/api/status`
+  requests.
+- **HTTP server hardened with timeouts:** `ReadTimeout: 15s`,
+  `WriteTimeout: 60s`, `IdleTimeout: 120s`.
+- **Request body size capped at 1 MB** via `limitedDecoder()` applied to all
+  JSON-decoded API endpoints.
+- **Network data size limits:** GitHub API responses capped at 1 MB and update
+  downloads capped at 256 MB via `io.LimitReader`.
+- Version refresh (`?refresh=1`) is now synchronous — the existing `checking`
+  guard prevents duplicate GitHub API calls.
+
+### Fixed
+
+- **WebSocket write race in SSH terminal.** All `conn.WriteJSON` calls are
+  serialized through a per-connection `sync.Mutex` (`wsWrite` helper).
+- **SSH client leak on reconnect.** `startSSHSession` now tracks the
+  `*ssh.Client` in the outer scope and closes the previous client alongside
+  the session and stdin when a new connection is established.
+- **WebSocket read buffer overflow.** Added `conn.SetReadLimit(64 KB)` to
+  prevent unbounded memory growth from malicious input.
+- **`readFirstLine` double conversion.** Fixed redundant `string()` wrapping
+  of `os.ReadFile` output in `stats.go`.
+
 ## [2.1.3] - 2026-08-17
 
 ### Changed

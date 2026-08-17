@@ -78,8 +78,23 @@ func (a *API) Start() {
 	} else {
 		log.Printf("[api] API authentication: dashboard login (no API key set yet; generate one in Settings)")
 	}
-	if err := http.ListenAndServe(a.cfg.APIListen, handler); err != nil {
-		log.Fatalf("[api] server failed: %v", err)
+	srv := &http.Server{
+		Addr:         a.cfg.APIListen,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	if a.cfg.TLSCertFile != "" && a.cfg.TLSKeyFile != "" {
+		log.Printf("[api] TLS enabled: cert=%s key=%s", a.cfg.TLSCertFile, a.cfg.TLSKeyFile)
+		if err := srv.ListenAndServeTLS(a.cfg.TLSCertFile, a.cfg.TLSKeyFile); err != nil {
+			log.Fatalf("[api] TLS server failed: %v", err)
+		}
+	} else {
+		log.Printf("[api] TLS not configured — serving plain HTTP (set TLS_CERT_FILE + TLS_KEY_FILE to enable HTTPS)")
+		if err := srv.ListenAndServe(); err != nil {
+			log.Fatalf("[api] server failed: %v", err)
+		}
 	}
 }
 
@@ -171,7 +186,7 @@ func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 		Password        string `json:"password"`
 		ConfirmPassword string `json:"confirm_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON: "+err.Error())
 		return
 	}
@@ -277,6 +292,17 @@ func jsonResp(w http.ResponseWriter, code int, data interface{}) {
 
 func jsonErr(w http.ResponseWriter, code int, msg string) {
 	jsonResp(w, code, map[string]string{"error": msg})
+}
+
+const maxBodySize = 1 << 20
+
+func limitedDecoder(r *http.Request, v interface{}) error {
+	lr := io.LimitReader(r.Body, maxBodySize+1)
+	dec := json.NewDecoder(lr)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	return nil
 }
 
 func shortKey(k string) string {
@@ -400,7 +426,7 @@ func (a *API) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req peerAddReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON: "+err.Error())
 		return
 	}
@@ -475,7 +501,7 @@ func (a *API) handlePeerRemove(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PublicKey string `json:"public_key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON")
 		return
 	}
@@ -517,7 +543,7 @@ func (a *API) handleConfigure(w http.ResponseWriter, r *http.Request) {
 		PrivateKey string `json:"private_key"`
 		ListenPort int    `json:"listen_port"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON")
 		return
 	}
@@ -563,7 +589,7 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 		DNS        string `json:"dns,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON")
 		return
 	}
@@ -661,7 +687,7 @@ func (a *API) handlePeerConfig(w http.ResponseWriter, r *http.Request) {
 		ServerHost string `json:"server_host,omitempty"`
 		DNS        string `json:"dns,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON")
 		return
 	}
@@ -828,7 +854,7 @@ func (a *API) checkGitHubRelease() {
 	}
 
 	var release githubRelease
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		log.Printf("[version] read body: %v", err)
 		return
@@ -906,7 +932,7 @@ func (a *API) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DownloadURL string `json:"download_url"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DownloadURL == "" {
+	if err := limitedDecoder(r, &req); err != nil || req.DownloadURL == "" {
 		jsonErr(w, 400, "download_url required")
 		return
 	}
@@ -940,7 +966,7 @@ func (a *API) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "cannot create temp file: "+err.Error())
 		return
 	}
-	written, err := io.Copy(out, resp.Body)
+	written, err := io.Copy(out, io.LimitReader(resp.Body, 256<<20))
 	out.Close()
 	if err != nil {
 		os.Remove(tmpPath)

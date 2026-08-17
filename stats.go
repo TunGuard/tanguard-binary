@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -52,6 +53,7 @@ type SystemStats struct {
 
 func collectSystemStats(dataDir string) SystemStats {
 	hostname, _ := os.Hostname()
+	startCPUCache()
 
 	s := SystemStats{
 		Hostname:  hostname,
@@ -59,7 +61,7 @@ func collectSystemStats(dataDir string) SystemStats {
 		Kernel:    readFirstLine("/proc/sys/kernel/osrelease"),
 		CPUModel:  readCPUModel(),
 		CPUCores:  runtime.NumCPU(),
-		CPUPercent: cpuPercent(),
+		CPUPercent: cachedCPUPercent(),
 		Load:      loadAverage(),
 		Uptime:    uptimeSeconds(),
 		Processes: processCounts(),
@@ -75,10 +77,11 @@ func readFirstLine(path string) string {
 	if err != nil {
 		return ""
 	}
-	if i := strings.IndexByte(string(data), '\n'); i >= 0 {
-		return strings.TrimSpace(string(data[:i]))
+	s := string(data)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
 	}
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(s)
 }
 
 func readOSRelease() string {
@@ -131,6 +134,41 @@ func cpuPercent() float64 {
 		pct = 100
 	}
 	return round1(pct)
+}
+
+var (
+	cachedCPU     float64
+	cachedCPUMu   sync.RWMutex
+	cpuStarted    bool
+)
+
+func startCPUCache() {
+	cachedCPUMu.Lock()
+	if cpuStarted {
+		cachedCPUMu.Unlock()
+		return
+	}
+	cpuStarted = true
+	cachedCPUMu.Unlock()
+
+	go func() {
+		cachedCPUMu.Lock()
+		cachedCPU = cpuPercent()
+		cachedCPUMu.Unlock()
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			cachedCPUMu.Lock()
+			cachedCPU = cpuPercent()
+			cachedCPUMu.Unlock()
+		}
+	}()
+}
+
+func cachedCPUPercent() float64 {
+	cachedCPUMu.RLock()
+	defer cachedCPUMu.RUnlock()
+	return cachedCPU
 }
 
 func readCPUStat() (idle, total uint64) {
