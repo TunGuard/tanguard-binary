@@ -326,6 +326,7 @@ function showPasswordPrompt() {
         ws.send(JSON.stringify({ type: 'auth', password: buf }));
         buf = '';
         field = 'done';
+        term.onData(data => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data })); });
       }
     } else if (data === '\x7f') {
       if (buf.length > 0) { buf = buf.slice(0, -1); term.write('\b \b'); }
