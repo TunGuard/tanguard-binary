@@ -870,6 +870,10 @@ func (a *API) checkGitHubRelease() {
 }
 
 func (a *API) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("refresh") == "1" {
+		a.checkGitHubRelease()
+	}
+
 	versionCache.mu.RLock()
 	defer versionCache.mu.RUnlock()
 

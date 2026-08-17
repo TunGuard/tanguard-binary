@@ -232,7 +232,7 @@ async function openUpdateModal() {
   footer.style.display = 'none';
   content.innerHTML = '<div style="text-align:center;padding:20px 0"><div class="spinner"></div><p style="color:var(--on-surface-med);margin-top:12px;font-size:13px">Checking for updates...</p></div>';
 
-  const data = await fetchAPI('/api/version');
+  const data = await fetchAPI('/api/version?refresh=1');
   if (!data) {
     content.innerHTML = '<div class="alert alert-danger">Failed to check for updates.</div>';
     return;
