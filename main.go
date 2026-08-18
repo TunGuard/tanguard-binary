@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-const version = "2.2.0"
+const version = "2.2.1"
 
 func printUsage() {
 	fmt.Println("TunGuard - userspace WireGuard engine")
@@ -126,7 +126,10 @@ func main() {
 
 	setupNAT(cfg)
 
-	api := NewAPI(wg, store, cfg, creds, apiKeys)
+	monitor := NewPeerMonitor(wg)
+	monitor.Start()
+
+	api := NewAPI(wg, store, cfg, creds, apiKeys, monitor)
 	go api.Start()
 
 	if cfg.SSHEnabled {

@@ -66,7 +66,7 @@ function timeAgo(sec) {
   if (!sec || sec === 0) return 'never';
   const diff = Date.now() / 1000 - sec;
   if (diff < 60) return Math.floor(diff) + 's ago';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 3600) { const m = Math.floor(diff / 60); const s = Math.floor(diff % 60); return m + 'm' + (s > 0 ? s + 's' : '') + ' ago'; }
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   return new Date(sec * 1000).toLocaleDateString();
 }

@@ -5,6 +5,15 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-08-18
+
+### Fixed
+
+- **Peers page "last handshake" time now shows second precision.** The `timeAgo`
+  display previously dropped seconds for durations between 1–59 minutes (e.g.
+  showing "1m ago" at 97 seconds). It now shows the exact time like "1m37s ago",
+  matching the `STALE_97S` monitor events.
+
 ## [2.2.0] - 2026-08-17
 
 ### Added
