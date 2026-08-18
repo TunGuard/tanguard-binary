@@ -18,16 +18,17 @@ import (
 )
 
 type API struct {
-	wg     *WgServer
-	store  *PeerStore
-	cfg    *Config
-	creds  *CredentialStore
-	apiKey *APIKeyStore
-	ipMu   sync.Mutex
+	wg      *WgServer
+	store   *PeerStore
+	cfg     *Config
+	creds   *CredentialStore
+	apiKey  *APIKeyStore
+	monitor *PeerMonitor
+	ipMu    sync.Mutex
 }
 
-func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore, apiKeys *APIKeyStore) *API {
-	return &API{wg: wg, store: store, cfg: cfg, creds: creds, apiKey: apiKeys}
+func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore, apiKeys *APIKeyStore, monitor *PeerMonitor) *API {
+	return &API{wg: wg, store: store, cfg: cfg, creds: creds, apiKey: apiKeys, monitor: monitor}
 }
 
 func (a *API) Start() {
@@ -67,6 +68,10 @@ func (a *API) Start() {
 	mux.Handle("/api/ws/ssh", a.requireAPI(a.handleWebSSH))
 	mux.Handle("/api/version", a.requireAPI(a.handleVersion))
 	mux.Handle("/api/update", a.requireAPI(a.handleUpdate))
+	if a.monitor != nil {
+		mux.Handle("/api/peer-monitor/events", a.requireAPI(a.monitor.HandleEvents))
+		mux.Handle("/api/peer-monitor/state", a.requireAPI(a.monitor.HandleState))
+	}
 
 	handler := corsMiddleware(logMiddleware(mux))
 
