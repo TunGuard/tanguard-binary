@@ -1,9 +1,21 @@
 # TunGuard
+<p align="center">
+  <img src="https://img.shields.io/badge/WireGuard-88171A?style=for-the-badge&logo=wireguard&logoColor=white" alt="WireGuard">
+  <img src="https://img.shields.io/badge/MikroTik-293239?style=for-the-badge&logo=mikrotik&logoColor=white" alt="MikroTik">
+  <img src="https://img.shields.io/badge/OpenWrt-00B5E2?style=for-the-badge&logo=openwrt&logoColor=white" alt="OpenWrt">
+  <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux">
+  <img src="https://img.shields.io/badge/RouterOS-293239?style=for-the-badge&logo=mikrotik&logoColor=white" alt="RouterOS">
+  <img src="https://img.shields.io/badge/IPv4%20%2F%20IPv6-00599C?style=for-the-badge&logo=internetexplorer&logoColor=white" alt="IPv4 IPv6">
+</p>
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/TunGuard/tanguard-binary)](https://golang.org)
-[![License](https://img.shields.io/github/license/TunGuard/tanguard-binary)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/TunGuard/tanguard-binary)](https://github.com/TunGuard/tanguard-binary/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/TunGuard/tanguard-binary/release.yml?branch=main)](https://github.com/TunGuard/tanguard-binary/actions)
+<p align="center">
+  <img src="https://img.shields.io/github/go-mod/go-version/TunGuard/tanguard-binary?style=flat-square" alt="Go Version">
+  <img src="https://img.shields.io/github/license/TunGuard/tanguard-binary?style=flat-square" alt="License">
+  <img src="https://img.shields.io/github/v/release/TunGuard/tanguard-binary?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/github/actions/workflow/status/TunGuard/tanguard-binary/release.yml?branch=main&style=flat-square" alt="Build">
+  <img src="https://img.shields.io/github/downloads/TunGuard/tanguard-binary/total?style=flat-square" alt="Downloads">
+  <img src="https://img.shields.io/github/stars/TunGuard/tanguard-binary?style=flat-square" alt="Stars">
+</p>
 
 **Userspace WireGuard VPN Server — Web Dashboard — SSH Gateway**
 
@@ -31,6 +43,55 @@ go build -o tanguard .
 
 sudo ./tanguard -web
 ```
+
+## The dashboard will be available at:
+
+http://YOUR_SERVER_IP:9000
+
+## 3. Log in
+
+On a fresh installation, use the default dashboard credentials:
+```
+Username: admin
+Password: tanguard
+```
+You must change these credentials on your first login.
+
+After logging in, TunGuard will immediately take you to the dashboard login setup screen. Choose a new username and password before continuing.
+
+«Important: Do not leave the default "admin" / "tanguard" credentials in use on an Internet-facing server.»
+
+Your new dashboard credentials are also used by the optional SSH Gateway.
+
+## 4. Connect your first device
+
+You can connect a normal WireGuard device or provision a MikroTik router.
+
+WireGuard device
+
+1. Open Peers.
+2. Click Generate Config.
+3. Enter a device name, such as "My Phone".
+4. Click Generate.
+5. Download or copy the ".conf" file, or scan the displayed QR code with the WireGuard mobile app.
+
+That's it. Your device can now connect to the TunGuard VPN.
+---
+
+#### MikroTik router
+
+For MikroTik routers, you can use MikroTik Provision to generate and apply the required RouterOS configuration.
+
+Open:
+
+<a href="https://mikrotik-provision.vercel.app/">
+  <img src="https://img.shields.io/badge/OPEN%20MIKROTIK%20PROVISION-Configure%20Your%20Router%20%E2%86%92-0066FF?style=for-the-badge&logo=mikrotik&logoColor=white" alt="Open MikroTik Provision" height="52">
+</a>
+
+- Enter your TunGuard server details and follow the provisioning instructions to configure the MikroTik router as a WireGuard client.
+
+This is useful when you want to connect an entire network behind a MikroTik router instead of configuring individual devices.
+
 
 ### Full service: VPN + Web UI + SSH jump host
 
