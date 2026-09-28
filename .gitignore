@@ -1,6 +1,8 @@
 tanguard
 tanguard.exe
 peers.json
+nodes.json
+proxies.json
 wg_status.json
 server_private.key
 server_wg_pubkey.txt

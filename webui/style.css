@@ -372,6 +372,7 @@ img { max-width: 100%; display: block; }
   line-height: 1.2;
   word-break: break-all;
 }
+.stat-value.compact { font-size: 15px; }
 .stat-trend { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; }
 .stat-trend.up   { color: var(--green); }
 .stat-trend.down { color: var(--red);   }
@@ -431,6 +432,27 @@ img { max-width: 100%; display: block; }
 .quick-action-btn .quick-icon.yellow { background: #FEF7E0; } .quick-action-btn .quick-icon.yellow svg { fill: var(--yellow); }
 .quick-action-btn .quick-icon.red { background: #FCE8E6; } .quick-action-btn .quick-icon.red svg { fill: var(--red); }
 .quick-action-btn .quick-icon.teal { background: #E0F7FA; } .quick-action-btn .quick-icon.teal svg { fill: var(--teal-400); }
+
+/* ─── Flow diagram (TRP) ────────────────────────────────────────────── */
+.flow { display: flex; align-items: stretch; gap: 12px; }
+.flow-step {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  min-width: 0;
+}
+.flow-step-label { font-size: 11px; color: var(--on-surface-med); margin-bottom: 4px; }
+.flow-step-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-surface);
+  word-break: break-all;
+}
+.flow-arrow { display: flex; align-items: center; flex-shrink: 0; }
+.flow-arrow svg { width: 20px; height: 20px; fill: var(--on-surface-low); }
 
 /* ─── Tables ────────────────────────────────────────────────────────── */
 .table-wrapper { overflow-x: auto; }
@@ -789,6 +811,8 @@ textarea.form-control { font-family: var(--mono); font-size: 12px; resize: verti
   .main-content { margin-left: 0 !important; }
   .topbar-menu-btn { display: flex; }
   .form-row, .form-row-3 { grid-template-columns: 1fr; }
+  .flow { flex-direction: column; }
+  .flow-arrow { transform: rotate(90deg); align-self: center; }
   .config-display { flex-direction: column; }
   .page-header { flex-direction: column; }
 }

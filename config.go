@@ -22,12 +22,19 @@ type Config struct {
 	WebUsername string
 	WebPassword string
 
-	SSHEnabled  bool
-	SSHListen   string
-	SSHKeyFile  string
+	SSHEnabled bool
+	SSHListen  string
+	SSHKeyFile string
 
 	TLSCertFile string
 	TLSKeyFile  string
+
+	DDNSEnabled        bool
+	DDNSBaseURL        string
+	DDNSBinaryID       string
+	DDNSEmail          string
+	DDNSPassword       string
+	DDNSUpdateInterval int
 }
 
 func loadConfig() *Config {
@@ -48,12 +55,19 @@ func loadConfig() *Config {
 		WebUsername: envStr("WEB_USERNAME", "admin"),
 		WebPassword: envStr("WEB_PASSWORD", "tanguard"),
 
-		SSHEnabled:  envStr("SSH_ENABLED", "false") == "true",
-		SSHListen:   envStr("SSH_LISTEN", ":2222"),
-		SSHKeyFile:  envStr("SSH_KEY_FILE", ""),
+		SSHEnabled: envStr("SSH_ENABLED", "false") == "true",
+		SSHListen:  envStr("SSH_LISTEN", ":2222"),
+		SSHKeyFile: envStr("SSH_KEY_FILE", ""),
 
 		TLSCertFile: envStr("TLS_CERT_FILE", ""),
 		TLSKeyFile:  envStr("TLS_KEY_FILE", ""),
+
+		DDNSEnabled:        envStr("DDNS_ENABLED", "false") == "true",
+		DDNSBaseURL:        envStr("DDNS_BASE_URL", ""),
+		DDNSBinaryID:       envStr("DDNS_BINARY_ID", ""),
+		DDNSEmail:          envStr("DDNS_EMAIL", ""),
+		DDNSPassword:       envStr("DDNS_PASSWORD", ""),
+		DDNSUpdateInterval: envInt("DDNS_UPDATE_INTERVAL", 600),
 	}
 }
 

@@ -72,6 +72,7 @@ func (a *API) Start() {
 		mux.Handle("/api/peer-monitor/events", a.requireAPI(a.monitor.HandleEvents))
 		mux.Handle("/api/peer-monitor/state", a.requireAPI(a.monitor.HandleState))
 	}
+	registerMeshRoutes(mux, a)
 
 	handler := corsMiddleware(logMiddleware(mux))
 
@@ -911,7 +912,7 @@ func (a *API) handleVersion(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, 200, map[string]interface{}{
 		"current_version":  version,
 		"latest_version":   versionCache.latestVersion,
-		"update_available":  versionCache.updateAvailable,
+		"update_available": versionCache.updateAvailable,
 		"download_url":     versionCache.downloadURL,
 		"release_notes":    versionCache.releaseNotes,
 		"release_url":      versionCache.releaseURL,

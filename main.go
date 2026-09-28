@@ -41,11 +41,49 @@ func printUsage() {
 	os.Exit(0)
 }
 
+// runMeshOnly serves the tun control plane and the dashboard without touching
+// WireGuard. It is the mode used to test and operate P2P and TRP on a host
+// that has no tun device, or no privileges to create one.
+func runMeshOnly(cfg *Config) {
+	log.Printf("[main] mesh-only mode: WireGuard disabled, control plane only")
+	creds := NewCredentialStore(cfg.DataDir)
+	if err := creds.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load web credentials: %v", err)
+	}
+	apiKeys := NewAPIKeyStore(cfg.DataDir)
+	if err := apiKeys.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load API key: %v", err)
+	}
+
+	hub := StartMesh(cfg)
+	if hub == nil {
+		log.Fatalf("[main] mesh control plane failed to start (is MESH_ENABLED=false?)")
+	}
+	log.Printf("[main] tun control plane ready: control=%s relay=%s",
+		hub.cfg.ControlListen, hub.cfg.RelayListen)
+
+	// The API is started with no WireGuard server and no peer store: the mesh
+	// handlers only read the hub, but the routes they share are the normal ones
+	// so the dashboard behaves exactly as it does in a full deployment.
+	api := NewAPI(nil, NewPeerStore(cfg.DataDir), cfg, creds, apiKeys, nil)
+	go api.Start()
+	user := cfg.WebUsername
+	if u, ok := creds.Username(); ok {
+		user = u
+	}
+	log.Printf("[main] web dashboard at http://localhost%s  user=%s", cfg.APIListen, user)
+
+	// Relay and TRP run in their own goroutines, so the process just waits.
+	select {}
+}
+
 func main() {
 	webFlag := flag.Bool("web", false, "Enable web dashboard")
 	sshFlag := flag.Bool("ssh", false, "Enable SSH gateway")
 	resetFlag := flag.Bool("reset", false, "Reset web dashboard credentials to default (admin/tanguard)")
 	hFlag := flag.Bool("help", false, "Show usage")
+	meshOnlyFlag := flag.Bool("mesh-only", false,
+		"Run only the tun control plane (P2P + TRP + dashboard), without WireGuard")
 	flag.Parse()
 
 	if *hFlag {
@@ -84,6 +122,15 @@ func main() {
 	if *sshFlag {
 		cfg.SSHEnabled = true
 	}
+	if *meshOnlyFlag {
+		// P2P and TRP are independent of the WireGuard tunnel: a mesh can be
+		// stood up, tested and run on a host that cannot create a tun device.
+		// The dashboard is the only way to drive them, so it is implied here.
+		cfg.WebEnabled = true
+		runMeshOnly(cfg)
+		return
+	}
+
 	log.Printf("[main] config: iface=%s port=%d addr=%s api=%s web=%v ssh=%v",
 		cfg.InterfaceName, cfg.ListenPort, cfg.Address, cfg.APIListen,
 		cfg.WebEnabled, cfg.SSHEnabled)
@@ -131,6 +178,13 @@ func main() {
 
 	api := NewAPI(wg, store, cfg, creds, apiKeys, monitor)
 	go api.Start()
+
+	// tun control plane: TCP :7000 for node control, UDP :7001 for the P2P
+	// rendezvous/relay, plus the TRP reverse-proxy bindings.
+	if hub := StartMesh(cfg); hub != nil {
+		log.Printf("[main] tun control plane ready: control=%s relay=%s",
+			hub.cfg.ControlListen, hub.cfg.RelayListen)
+	}
 
 	if cfg.SSHEnabled {
 		sshGW, err := NewSSHGateway(cfg, creds)

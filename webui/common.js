@@ -92,6 +92,28 @@ async function fetchAPI(path, opts) {
   }
 }
 
+// postJSON sends a JSON body to a mutating endpoint. Unlike fetchAPI it throws
+// on failure, because a page that silently swallows a failed action looks
+// identical to one that worked.
+async function postJSON(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  let data = null;
+  try {
+    data = await r.json();
+  } catch (e) {
+    throw new Error('server returned a non-JSON response (' + r.status + ')');
+  }
+  if (!r.ok) {
+    throw new Error(data && data.error ? data.error : 'request failed (' + r.status + ')');
+  }
+  return data;
+}
+
 async function loadSidebarStatus() {
   const list = document.getElementById('sidebarStatusList');
   if (!list) return;
