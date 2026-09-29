@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,6 +96,10 @@ type clientProc struct {
 	dir     string
 	logPath string
 	done    chan error
+	// stopOnce makes stop idempotent: a test that stops a client explicitly
+	// and then lets t.Cleanup stop it again must not wait a second time on a
+	// channel whose single value the first call already drained.
+	stopOnce sync.Once
 }
 
 // dump prints whatever the client wrote, which is the only way to debug a
@@ -110,14 +115,16 @@ func (c *clientProc) dump(t *testing.T) {
 
 func (c *clientProc) stop(t *testing.T) {
 	t.Helper()
-	if c.cmd.Process != nil {
-		c.cmd.Process.Kill()
-	}
-	select {
-	case <-c.done:
-	case <-time.After(5 * time.Second):
-		t.Error("client did not exit after kill")
-	}
+	c.stopOnce.Do(func() {
+		if c.cmd.Process != nil {
+			c.cmd.Process.Kill()
+		}
+		select {
+		case <-c.done:
+		case <-time.After(5 * time.Second):
+			t.Error("client did not exit after kill")
+		}
+	})
 }
 
 func startClient(t *testing.T, bin, serverIP, psk, stateDir string) *clientProc {
@@ -126,7 +133,10 @@ func startClient(t *testing.T, bin, serverIP, psk, stateDir string) *clientProc 
 		t.Fatalf("state dir: %v", err)
 	}
 	cmd := exec.Command(bin, serverIP, psk, stateDir)
-	cmd.Env = append(os.Environ(), "HOME="+stateDir)
+	// TUN_FOREGROUND keeps the client from double-forking into a daemon: the
+	// harness has to own the real process so stop() can actually end it and a
+	// reconnect test sees the control channel drop.
+	cmd.Env = append(os.Environ(), "HOME="+stateDir, "TUN_FOREGROUND=1")
 	logPath := filepath.Join(t.TempDir(), "client.log")
 	logf, err := os.Create(logPath)
 	if err != nil {

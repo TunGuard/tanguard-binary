@@ -534,15 +534,20 @@ func TestAddPeerRejectsGarbage(t *testing.T) {
 // device ids a client stored are useless.
 func TestNodePersistence(t *testing.T) {
 	dir := t.TempDir()
+	// The two hubs get separate ports: the point of the test is the reload,
+	// and reusing ports made the second hub fail to bind while the assertions
+	// below still passed against a half-initialised object.
 	ctrl := fmt.Sprintf("127.0.0.1:%d", freePort(t))
 	relay := fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t))
-	set := func() {
+	ctrl2 := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	relay2 := fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t))
+	set := func(c, r string) {
 		t.Setenv("MESH_ENABLED", "true")
-		t.Setenv("CONTROL_LISTEN", ctrl)
-		t.Setenv("RELAY_LISTEN", relay)
+		t.Setenv("CONTROL_LISTEN", c)
+		t.Setenv("RELAY_LISTEN", r)
 		t.Setenv("MESH_DATA_DIR", dir)
 	}
-	set()
+	set(ctrl, relay)
 	h1 := StartMesh(nil)
 	if h1 == nil {
 		t.Fatal("nil hub")
@@ -556,12 +561,18 @@ func TestNodePersistence(t *testing.T) {
 		t.Fatalf("saveNodes: %v", err)
 	}
 
-	set()
+	set(ctrl2, relay2)
 	h2 := StartMesh(nil)
 	if h2 == nil {
 		t.Fatal("nil hub")
 	}
 	defer h2.Close()
+	// StartMesh returns a usable object even when a listener fails to bind, so
+	// assert the reload test really did open a control plane. Reusing h1's
+	// ports would silently make this whole test a no-op.
+	if h2.listener == nil {
+		t.Fatal("reloaded hub has no control listener: ports were still in use")
+	}
 	if got := len(h2.listNodes(false)); got != want {
 		t.Fatalf("after reload: %d nodes, want %d", got, want)
 	}

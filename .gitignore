@@ -8,5 +8,6 @@ server_private.key
 server_wg_pubkey.txt
 ssh_host_key
 web_credentials.json
+api_key.json
 *.log
 .DS_Store

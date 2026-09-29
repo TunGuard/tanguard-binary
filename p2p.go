@@ -356,16 +356,15 @@ func (h *MeshHub) joinRelay(id string) error {
 	if nc == nil {
 		return errNodeOffline
 	}
-	addr, err := net.ResolveUDPAddr("udp", h.cfg.RelayListen)
+	nc.mu.Lock()
+	localIP, self := nc.localIP, nc.nodeID
+	nc.mu.Unlock()
+	addr, err := hubAddrFor(h.cfg.RelayListen, localIP)
 	if err != nil {
 		return err
 	}
-	nc.mu.Lock()
-	ip, self := nc.localIP, nc.nodeID
-	nc.mu.Unlock()
 	var payload [8]byte
-	copy(payload[0:4], toV4(ip))
-	binary.BigEndian.PutUint16(payload[4:6], uint16(addr.Port))
+	applyTarget(&payload, addr)
 	// The node id field carries this node's own id, which it must stamp on
 	// every hub datagram.
 	return nc.sendCommandTo(cmdP2PHub, payload, self)
@@ -411,8 +410,8 @@ func (h *MeshHub) directConnect(a, b string) error {
 		return &simpleErr{"cannot resolve peer endpoint"}
 	}
 	var aToB, bToA [8]byte
-	applyTarget(aToB, aAddr)
-	applyTarget(bToA, bAddr)
+	applyTarget(&aToB, aAddr)
+	applyTarget(&bToA, bAddr)
 	if err := ac.addPeer(b, bEP, aToB); err != nil {
 		return err
 	}
@@ -446,8 +445,8 @@ func (h *MeshHub) ensurePeerPunch(a, b string) error {
 	// Each side is told the *other* side's endpoint: the payload carries the
 	// address to punch, the node-id field carries who it belongs to.
 	var toB, toA [8]byte
-	applyTarget(toB, bAddr)
-	applyTarget(toA, aAddr)
+	applyTarget(&toB, bAddr)
+	applyTarget(&toA, aAddr)
 	if err := ac.addPeer(b, bEP, toB); err != nil {
 		return err
 	}
@@ -510,23 +509,39 @@ func (nc *NodeConn) peerSnapshot() map[string]*P2PPeer {
 	return out
 }
 
+// hubAddrFor decides which address to advertise to a node for the rendezvous
+// socket. A listen config of ":7001" resolves to the unspecified address, which
+// is not something a client can send to, so fall back to the address this node
+// was actually reached on.
+func hubAddrFor(listen, localIP string) (*net.UDPAddr, error) {
+	addr, err := net.ResolveUDPAddr("udp", listen)
+	if err != nil {
+		return nil, err
+	}
+	if addr.IP == nil || addr.IP.IsUnspecified() {
+		if ip := net.ParseIP(localIP); ip != nil {
+			addr.IP = ip
+		}
+	}
+	return addr, nil
+}
+
 // sendHubTarget tells a node where the rendezvous socket is, and hands it its
 // own node id in the same frame — the id it must stamp on hub traffic.
 func (h *MeshHub) sendHubTarget(nc *NodeConn) {
-	addr, err := net.ResolveUDPAddr("udp", h.cfg.RelayListen)
+	nc.mu.Lock()
+	ip, self := nc.localIP, nc.nodeID
+	nc.mu.Unlock()
+	addr, err := hubAddrFor(h.cfg.RelayListen, ip)
 	if err != nil {
 		log.Printf("[p2p] hub resolve %s: %v", h.cfg.RelayListen, err)
 		return
 	}
-	nc.mu.Lock()
-	ip, self := nc.localIP, nc.nodeID
-	nc.mu.Unlock()
 	var payload [8]byte
-	applyTarget(payload, addr)
+	applyTarget(&payload, addr)
 	if err := nc.sendCommandTo(cmdP2PHub, payload, self); err != nil {
 		log.Printf("[p2p] hub command to %s failed: %v", self, err)
 	}
-	_ = ip
 }
 
 // maintainGroupMesh re-links a group as membership changes. It runs for the
@@ -649,8 +664,9 @@ func toV4(s string) []byte {
 }
 
 // applyTarget writes an IPv4 endpoint into a control payload: 4 raw bytes of
-// address then a big-endian port.
-func applyTarget(payload [8]byte, addr *net.UDPAddr) {
+// address then a big-endian port. The payload is taken by pointer because a
+// [8]byte passed by value would leave every write here in a discarded copy.
+func applyTarget(payload *[8]byte, addr *net.UDPAddr) {
 	copy(payload[0:4], toV4(addr.IP.String()))
 	binary.BigEndian.PutUint16(payload[4:6], uint16(addr.Port))
 }

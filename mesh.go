@@ -236,11 +236,26 @@ func (h *MeshHub) saveNodes() error {
 	if err != nil {
 		return err
 	}
-	tmp := h.nodesPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	// A fixed ".tmp" name would let two concurrent saves race: both write the
+	// same path and the loser's rename fails with ENOENT once the winner has
+	// already moved it. A unique name keeps the write atomic and private to
+	// this call.
+	tmp, err := os.CreateTemp(filepath.Dir(h.nodesPath), filepath.Base(h.nodesPath)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, h.nodesPath)
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), h.nodesPath)
 }
 
 // ---- Registry access ------------------------------------------------------
