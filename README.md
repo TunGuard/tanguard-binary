@@ -335,6 +335,165 @@ curl -X POST http://localhost:9000/api/peer/remove \
 
 See `INTEGRATION.md` for the WebSocket SSH protocol and PHP integration.
 
+## P2P and TRP API (curl)
+
+These endpoints automate the mesh control plane and TCP relay, so provisioning
+doesn't need the dashboard. They all require the same credentials as the rest of
+`/api/*`.
+
+They answer whenever the tun control plane is running, which is both modes:
+`-mesh-only`, and a full WireGuard server too (`MESH_ENABLED` defaults to true,
+so the mesh comes up automatically). With `MESH_ENABLED=false` the hub is never
+started and every endpoint below returns `503 tun control plane is disabled` —
+and in `-mesh-only` mode the process refuses to start at all.
+
+Mutating calls are `POST` with a JSON body. A `GET` on them returns `405`.
+
+```bash
+API_KEY="REPLACE_WITH_YOUR_KEY"
+H="X-API-Key: $API_KEY"
+JSON="Content-Type: application/json"
+API="http://localhost:9000"
+```
+
+### Nodes and groups
+
+A node is a client allowed onto the mesh. Nodes that share a PSK form a group
+and auto-mesh with each other; a node with no PSK gets a unique one. Every node
+add returns the generated `psk` — save it, it's the join credential.
+
+```bash
+# Mesh state: enabled, node/group counts, listen addresses
+curl -H "$H" $API/api/mesh/status
+
+# List nodes. PSKs are masked; add ?show_psk=1 to reveal them
+curl -H "$H" $API/api/mesh/nodes
+curl -H "$H" "$API/api/mesh/nodes?show_psk=1"
+
+# Devices bucketed by shared PSK, with per-group link counts
+curl -H "$H" $API/api/mesh/groups
+
+# Current direct and relayed links between nodes
+curl -H "$H" $API/api/mesh/links
+
+# Add a node. Omit "psk" to have one generated.
+# A "name" is only a label — it is NOT a unique key, and duplicates are allowed.
+# The returned "id" is the handle every other call needs.
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/add \
+  -d '{"name":"edge-a"}'
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/add \
+  -d '{"name":"edge-a","psk":"shared-group-key"}'
+
+# Remove a node, or reset it (clears its link state, keeps the record)
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/remove \
+  -d '{"id":"NODE_ID"}'
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/reset \
+  -d '{"id":"NODE_ID"}'
+```
+
+### P2P: direct paths
+
+Nodes in the same group are punched to each other automatically. These calls
+force a re-punch, drop a group back to relayed, or take a node off the mesh
+entirely. `p2p/connect` needs both nodes online — an offline or unknown id
+returns `400 node offline`.
+
+```bash
+# Force an immediate direct path between two nodes
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/p2p/connect \
+  -d '{"a":"NODE_ID_A","b":"NODE_ID_B"}'
+
+# Re-punch a whole group. "group" is the PSK.
+# {"enable":false} tears the group's direct links down (relay only)
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/p2p/mesh \
+  -d '{"group":"shared-group-key"}'
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/p2p/mesh \
+  -d '{"group":"shared-group-key","enable":false}'
+
+# Pin a relayed path src -> dst, or drop every link from src
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/relay/link \
+  -d '{"src":"NODE_ID_A","dst":"NODE_ID_B"}'
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/relay/unlink \
+  -d '{"src":"NODE_ID_A"}'
+
+# Attach a node to the relay hub, or detach it.
+# Both need the node connected - an offline or unknown id gives 400 node offline
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/relay/join  -d '{"id":"NODE_ID"}'
+curl -X POST -H "$H" -H "$JSON" $API/api/mesh/relay/leave -d '{"id":"NODE_ID"}'
+```
+
+### TRP: TCP relay
+
+A proxy listens locally on the hub and forwards each connection to
+`target_ip:target_port` on the target node over its mesh path. Leave `bind_port`
+as `""` to let the OS pick a free port — the chosen port comes back as
+`bind_port` and in `public_url`. `"0"` is rejected; only an empty string means
+auto-assign. `target_port` is always required and always numeric.
+
+```bash
+# List proxies, with live connection counts
+curl -H "$H" $API/api/trp/proxies
+
+# Auto-assigned listen port, forwarding to port 8022 on the node
+curl -X POST -H "$H" -H "$JSON" $API/api/trp/proxy/add \
+  -d '{"node_id":"NODE_ID","bind_port":"","target_port":"8022"}'
+
+# Fixed listen port, and an explicit target address
+curl -X POST -H "$H" -H "$JSON" $API/api/trp/proxy/add \
+  -d '{"node_id":"NODE_ID","bind_ip":"0.0.0.0","bind_port":"18022","target_ip":"127.0.0.1","target_port":"8022"}'
+
+# Remove a proxy
+curl -X POST -H "$H" -H "$JSON" $API/api/trp/proxy/remove \
+  -d '{"id":"PROXY_ID"}'
+```
+
+### Errors
+
+Failures are JSON with an `error` field, so scripts can branch on them:
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Bad request — `id required`, `node_id required`, `bind_port`/`target_port` out of range, `unknown group`, `node offline`, or malformed JSON |
+| `401` | Missing or invalid dashboard login / API key |
+| `404` | No such node, proxy, or binding |
+| `405` | `GET` used on a `POST`-only route |
+| `503` | Mesh control plane not running — set `MESH_ENABLED=true` (the default), or start with `-mesh-only` |
+
+### End-to-end example
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+API_KEY="REPLACE_WITH_YOUR_KEY"
+API="http://localhost:9000"
+field() { python3 -c "import json,sys;print(json.load(sys.stdin)['$1'])"; }
+
+# Add a node and keep its id and psk
+ADDED="$(curl -sS -X POST -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" "$API/api/mesh/node/add" \
+  -d '{"name":"edge-a"}')"
+NODE_ID="$(printf '%s' "$ADDED" | field id)"
+PSK="$(printf '%s' "$ADDED" | field psk)"
+echo "node=$NODE_ID psk=$PSK"
+
+# Expose a service running on the node
+PROXY="$(curl -sS -X POST -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" "$API/api/trp/proxy/add" \
+  -d "{\"node_id\":\"$NODE_ID\",\"bind_port\":\"\",\"target_port\":\"8022\"}")"
+echo "reachable at $(printf '%s' "$PROXY" | field public_url)"
+
+# Tear down
+curl -sS -X POST -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" "$API/api/trp/proxy/remove" \
+  -d "{\"id\":\"$(printf '%s' "$PROXY" | field id)\"}"
+curl -sS -X POST -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" "$API/api/mesh/node/remove" \
+  -d "{\"id\":\"$NODE_ID\"}"
+```
+
+Note: removing a node does not delete its TRP proxies automatically — remove
+those first with `/api/trp/proxy/remove`, or they keep holding their listeners.
+
 ## License
 
 MIT
