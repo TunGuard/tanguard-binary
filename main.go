@@ -9,7 +9,14 @@ import (
 	"syscall"
 )
 
-const version = "2.2.1"
+// version is overridable at build time with
+//
+//	-ldflags "-X main.version=$(git describe --tags --always)"
+//
+// so a tagged release reports its own version. Hardcoding it here meant every
+// release claimed to be the same build, and the dashboard offered an update
+// that could never be installed.
+var version = "2.3.0-dev"
 
 func printUsage() {
 	fmt.Println("TunGuard - userspace WireGuard engine")
