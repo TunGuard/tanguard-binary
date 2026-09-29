@@ -5,6 +5,73 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Removed an unreferenced DDNS client** (`ddns.go`) and its `DDNS_*` config
+  options. It was committed to v2.3.0 by accident, was never started by
+  `main.go`, and had no tests. It contained an untested path that downloads a
+  backup over the network and applies it, which should not ship disabled-but-
+  present. Nothing referenced it, so this changes no behavior.
+
+### Added
+
+- **P2P and TRP API reference in the README** covering every mesh and TRP
+  endpoint, with the authentication and error contract and a runnable
+  end-to-end example. Backed by tests that pin the documented behavior:
+  `401` without credentials, `405` on `GET` of a `POST`-only route, the `400`
+  validation errors, `503` when the control plane is down, and the TRP
+  add/list/remove lifecycle.
+
+## [2.3.1] - 2026-09-29
+
+### Fixed
+
+- **Releases now report their own version.** `version` was a hardcoded constant,
+  so every build claimed to be `2.2.1` — including the v2.3.0 release. The
+  update checker compared that string against the real latest tag, so a user who
+  installed the newest release was still told an update was available, and
+  installing it again never resolved it. The value is now stamped at build time
+  with `-X main.version`, and an untagged local build reports `2.3.0-dev`
+  instead of a release number.
+
+## [2.3.0] - 2026-09-29
+
+### Added
+
+- **P2P mesh.** Nodes that share a PSK discover each other over a rendezvous
+  port and are punched to a direct path, falling back to a relay when NAT
+  prevents it. Control plane on `CONTROL_LISTEN` (default `:7000`), rendezvous
+  and relay on `RELAY_LISTEN` (default `:7001`).
+- **TRP port mapping.** The hub listens on a local port and forwards each
+  connection to `target_ip:target_port` on the target node over its mesh path.
+  An empty `bind_port` auto-assigns a free port.
+- **`-mesh-only` mode** (`main.go`) runs the control plane, TRP and dashboard
+  with WireGuard disabled, so a mesh can be stood up on a host that cannot
+  create a tun device.
+- **Mesh and TRP dashboard pages** (`webui/p2p.html`, `webui/trp.html`) plus
+  `MESH_*`, `CONTROL_LISTEN` and `RELAY_LISTEN` configuration.
+- **CI workflow for documentation deployment** (`.github/workflows/docs.yml`).
+
+### Fixed
+
+- **Mesh control-payload target address was written into a copy.**
+  `applyTarget` took an `[8]byte` by value, so every node was told to punch a
+  zero address and no direct path ever completed. It now writes through a
+  pointer, as the other call sites already did.
+- **Relay advertisements with an unspecified address were unusable.** A node
+  that learned `0.0.0.0` as its relay endpoint advertised it verbatim, so peers
+  could not reach it. `hubAddrFor` now substitutes the local address observed
+  on the live path.
+- **Node persistence could interleave and lose records.** `saveNodes` wrote
+  `nodes.json` in place, so concurrent saves could produce a truncated file. It
+  now writes to a unique temporary file and renames into position; covered by
+  `TestSaveNodesConcurrent`.
+- **E2E tests raced the server under test.** The client shutdown path could run
+  more than once, and tests reused persistence ports and listeners. Tests now
+  pin an idempotent shutdown and allocate their own ports.
+
 ## [2.2.1] - 2026-08-18
 
 ### Fixed
