@@ -5,6 +5,58 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-10-03
+
+### Added
+
+- **Policy groups** (`policy.go`, `policy_filter.go`, `policy_routes.go`): an
+  administrative filter over connections that already exist. A group carries
+  four switches — allow devices in the group to talk to each other, allow P2P
+  automatic mesh features, allow TRP proxy port mapping features, and allow
+  standard WireGuard internet access — and a device is in exactly one group.
+- **Nothing about a connection changes.** Peers keep the same configuration,
+  stay authenticated and see no error: a denied packet is discarded silently, so
+  a blocked device times out as if the target were unreachable. The tunnel and
+  reaching the server always work, so a misconfigured group can always be fixed.
+- **The Default Global Group** holds every peer, has all four switches on, and
+  cannot be edited or deleted. A server that has never had a policy group
+  filters nothing, so existing deployments see no change in behaviour. Creating
+  a group is deny-by-default, and moving a device is explicit.
+- **Enforcement is live.** WireGuard traffic is filtered on a TUN wrapper
+  (`Read` and `Write`), P2P punching and relay routing consult the policy on
+  every decision, and TRP checks on creation and per connection. Changing a rule
+  or moving a device takes effect on the next packet, with no restart and no
+  change to the device. IPv4 only; IPv6 and unrecognised traffic pass through.
+- **Policy Groups dashboard page** (`webui/policy.html`, `webui/policy.js`)
+  with rule switches, device assignment, and drop counters, plus a full API
+  under `/api/policy/*` documented in the README.
+- **Policy groups are included in backups.** `policy_groups.json` is written
+  atomically on shutdown, validated on restore, and is added to the backup
+  archive; groups and memberships survive a restore without a restart.
+
+### Fixed
+
+- **The mesh-only dashboard used to panic on every page load.** In `-mesh-only`
+  mode there is no `WgServer`, and `/api/status` and `/api/peers` dereferenced
+  it unconditionally, so both returned no response and logged a stack trace.
+  `GetStatus` and `PublicKey` are now nil-safe and report an empty device.
+- **Restoring a backup in mesh-only mode used to panic.** An archive from a full
+  server carries a `server_private.key`, and the restore path called
+  `Configure` and `PublicKey` on the nil server, killing the request with no
+  response. The restore now skips the WireGuard steps when there is no server
+  and still applies peers, policy groups and credentials.
+- **A policy `apply` that declared the default group reported a confusing
+  `duplicate group id "default"`** instead of naming the real problem, because
+  the duplicate check ran before the reserved-id check.
+- **Policy drop counters could over-report.** The TUN `Write` path decided and
+  then rebuilt the batch, so a denied packet was counted twice and logged twice.
+  It is now a single pass, and an unfiltered batch is handed to the device
+  without being copied.
+- **The policy page could panic on a hand-edited `peers.json`.** `peers.json` is
+  not validated on load, and building the response sliced the first 8 bytes of
+  the public key; a shorter key crashed the handler. It now uses the existing
+  length-safe `shortKey` helper.
+
 ## [2.3.2] - 2026-09-29
 
 ### Fixed
