@@ -198,6 +198,18 @@ func (tm *TRPManager) bind(rec *TRProxy, duplicate bool) error {
 // RemoveProxy closes a binding's listener and drops it from the registry.
 func (tm *TRPManager) RemoveProxy(id string) error {
 	tm.mu.Lock()
+	rec, ok := tm.dropLocked(id)
+	tm.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("binding not found")
+	}
+	log.Printf("[trp] unbound %s from %s:%d", id, rec.BindIP, rec.BindPort)
+	return tm.save()
+}
+
+// dropLocked removes one proxy and closes its listener. It returns the record so
+// the caller can log it, and whether anything was there at all.
+func (tm *TRPManager) dropLocked(id string) (*TRProxy, bool) {
 	b := tm.bindings[id]
 	rec := tm.byID[id]
 	if b != nil {
@@ -205,21 +217,54 @@ func (tm *TRPManager) RemoveProxy(id string) error {
 		b.ln.Close()
 		delete(tm.bindings, id)
 	}
-	if rec != nil {
-		delete(tm.byID, id)
-		for i, p := range tm.proxies {
-			if p.ID == id {
-				tm.proxies = append(tm.proxies[:i], tm.proxies[i+1:]...)
-				break
-			}
+	if rec == nil {
+		return nil, false
+	}
+	delete(tm.byID, id)
+	for i, p := range tm.proxies {
+		if p.ID == id {
+			tm.proxies = append(tm.proxies[:i], tm.proxies[i+1:]...)
+			break
+		}
+	}
+	return rec, true
+}
+
+// RemoveProxiesForNode drops every mapping that targets a node and frees the
+// ports they hold. It is called when a node is deleted: a proxy whose target
+// node no longer exists can never forward again, so keeping it only strands a
+// listening port that nothing in the UI can release.
+//
+// Returns the number of mappings removed. The caller must not hold the hub
+// lock, because that is the other lock these two structures share.
+func (tm *TRPManager) RemoveProxiesForNode(nodeID string) int {
+	tm.mu.Lock()
+	// Iterate a snapshot: dropLocked compacts tm.proxies in place, so ranging
+	// over the live slice would shift elements underneath the loop and skip one.
+	targets := make([]string, 0, len(tm.proxies))
+	for _, p := range tm.proxies {
+		if p.NodeID == nodeID {
+			targets = append(targets, p.ID)
+		}
+	}
+	var dropped []*TRProxy
+	for _, id := range targets {
+		if rec, ok := tm.dropLocked(id); ok {
+			dropped = append(dropped, rec)
 		}
 	}
 	tm.mu.Unlock()
-	if rec == nil {
-		return fmt.Errorf("binding not found")
+
+	if len(dropped) == 0 {
+		return 0
 	}
-	log.Printf("[trp] unbound %s from %s:%d", id, rec.BindIP, rec.BindPort)
-	return tm.save()
+	for _, rec := range dropped {
+		log.Printf("[trp] released %s:%d (node %s was removed)", rec.BindIP, rec.BindPort, nodeID)
+	}
+	if err := tm.save(); err != nil {
+		log.Printf("[trp] WARNING: failed to persist after releasing node proxies: %v", err)
+	}
+	return len(dropped)
 }
 
 func (tm *TRPManager) bindingLoop(b *trpBinding) {

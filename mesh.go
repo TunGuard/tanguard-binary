@@ -498,6 +498,16 @@ func (h *MeshHub) removeNode(id string) error {
 		delete(h.conns, id)
 	}
 	h.mu.Unlock()
+
+	// Release any TRP mappings that pointed at this node. Done after dropping
+	// the hub lock, because the TRP manager shares it, and it has to happen at
+	// all: a mapping whose node is gone can never forward again, so leaving it
+	// behind would strand its listening port with no way to free it from the UI.
+	if h.trp != nil {
+		if n := h.trp.RemoveProxiesForNode(id); n > 0 {
+			log.Printf("[mesh] released %d TRP mapping(s) for removed node %s", n, id)
+		}
+	}
 	return h.saveNodes()
 }
 
