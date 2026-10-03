@@ -50,7 +50,12 @@ func startTestHub(t *testing.T) (*MeshHub, string, string) {
 	// looking like a dead link.
 	t.Setenv("CONTROL_TIMEOUT_S", "60")
 
+	// StartMesh installs a package-level hub, so put back the previous
+	// one: leaving a closed hub behind would surface its stale devices
+	// in a later test that lists them.
+	savedHub := meshHub
 	h := StartMesh(nil)
+	t.Cleanup(func() { meshHub = savedHub })
 	if h == nil {
 		t.Fatal("StartMesh returned nil")
 	}
@@ -548,7 +553,12 @@ func TestNodePersistence(t *testing.T) {
 		t.Setenv("MESH_DATA_DIR", dir)
 	}
 	set(ctrl, relay)
+	// StartMesh installs a package-level hub, so put back the previous
+	// one: leaving a closed hub behind would surface its stale devices
+	// in a later test that lists them.
+	savedHub := meshHub
 	h1 := StartMesh(nil)
+	t.Cleanup(func() { meshHub = savedHub })
 	if h1 == nil {
 		t.Fatal("nil hub")
 	}
@@ -562,7 +572,12 @@ func TestNodePersistence(t *testing.T) {
 	}
 
 	set(ctrl2, relay2)
+	// StartMesh installs a package-level hub, so put back the previous
+	// one: leaving a closed hub behind would surface its stale devices
+	// in a later test that lists them.
+	savedHub2 := meshHub
 	h2 := StartMesh(nil)
+	t.Cleanup(func() { meshHub = savedHub2 })
 	if h2 == nil {
 		t.Fatal("nil hub")
 	}

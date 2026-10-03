@@ -15,11 +15,18 @@ func newTRPHub(t *testing.T) (*MeshHub, string) {
 	t.Setenv("MESH_DATA_DIR", dir)
 	t.Setenv("CONTROL_LISTEN", "127.0.0.1:0")
 	t.Setenv("RELAY_LISTEN", "127.0.0.1:0")
+	// StartMesh installs a package-level hub that the policy handlers read, so
+	// put back whatever was there. Without this a device from this test's hub
+	// turns up in the next test's device list.
+	prev := meshHub
 	hub := StartMesh(&Config{})
 	if hub == nil {
 		t.Fatal("StartMesh returned nil")
 	}
-	t.Cleanup(hub.Close)
+	t.Cleanup(func() {
+		hub.Close()
+		meshHub = prev
+	})
 	return hub, dir
 }
 

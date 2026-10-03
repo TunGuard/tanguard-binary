@@ -156,7 +156,7 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		// assigns a peer that is not in the archive. Doing it against the real
 		// peer list matters: policy_groups.json carries no membership of its own
 		// that can be checked in isolation.
-		if _, err := restoredPolicy.validateAgainst(nil); err != nil {
+		if _, err := restoredPolicy.validateAgainst(nil, nil); err != nil {
 			jsonErr(w, 400, "backup contains an invalid policy_groups.json: "+err.Error())
 			return
 		}

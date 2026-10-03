@@ -333,7 +333,7 @@ func TestPolicyApplyReplacesState(t *testing.T) {
 		Groups: []*PolicyGroup{{Name: "Guests", AllowP2PMesh: true}},
 		Assign: map[string]string{"peerA": "unknown-group-id"},
 	}
-	if err := ps.Apply(rejected, known); err == nil {
+	if err := ps.Apply(rejected, known, nil); err == nil {
 		t.Error("a membership naming an unknown group must be rejected")
 	}
 	if ps.IsActive() {
@@ -357,7 +357,7 @@ func TestPolicyApplyReplacesState(t *testing.T) {
 			{Name: "Servers", AllowInterDevice: true, AllowTRP: true, AllowWGAccess: true, ID: servers.ID},
 		},
 		Assign: map[string]string{"peerA": guests.ID, "peerB": servers.ID},
-	}, known); err != nil {
+	}, known, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestPolicyApplyRefusesToShadowDefaultGroup(t *testing.T) {
 	ps := testPolicyStore(t)
 	err := ps.Apply(PolicyFile{
 		Groups: []*PolicyGroup{{Name: "Fake default", ID: DefaultPolicyGroupID}},
-	}, nil)
+	}, nil, nil)
 	if err == nil {
 		t.Error("a payload must not be able to redefine the default group")
 	}
@@ -838,11 +838,147 @@ func TestApplyRejectsADeclaredDefaultGroup(t *testing.T) {
 	ps := testPolicyStore(t)
 	err := ps.Apply(PolicyFile{
 		Groups: []*PolicyGroup{{ID: DefaultPolicyGroupID, Name: "Mine", AllowWGAccess: false}},
-	}, func(string) bool { return true })
+	}, func(string) bool { return true }, nil)
 	if err == nil {
 		t.Fatal("applying a payload that declares the default group must fail")
 	}
 	if !strings.Contains(err.Error(), "default group") {
 		t.Errorf("error should explain the default group is reserved, got %q", err)
+	}
+}
+
+// A tun-client device has no WireGuard peer, so before device-id membership
+// existed it resolved to no group at all and every capability was allowed. That
+// left client devices silently outside the policy layer: they never appeared on
+// the policy page and no group could restrict them.
+func TestClientOnlyDeviceIsRestrictedByDeviceIDMembership(t *testing.T) {
+	dir := t.TempDir()
+	store := NewPeerStore(dir)
+	if err := store.Load(); err != nil {
+		t.Fatalf("peer load: %v", err)
+	}
+	ps := NewPolicyStore(dir)
+	if err := ps.Load(); err != nil {
+		t.Fatalf("policy load: %v", err)
+	}
+	g, err := ps.Create("Guests", PolicyGroup{Name: "Guests"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// A group that denies everything, including being a TRP target.
+	if _, err := ps.Update(g.ID, PolicyGroup{ID: g.ID, Name: "Guests"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	const clientDevice = "abcd1234"
+	knownDevice := func(id string) bool { return id == clientDevice }
+	if err := ps.AssignDevices(g.ID, []string{clientDevice}, knownDevice, func(string) bool { return false }); err != nil {
+		t.Fatalf("AssignDevices: %v", err)
+	}
+
+	if ps.AllowTRPForNode(store, clientDevice) {
+		t.Error("a client device in a deny-all group is still allowed as a TRP target")
+	}
+	if ps.AllowP2PMeshForNode(store, clientDevice) {
+		t.Error("a client device in a deny-all group still joins the mesh")
+	}
+
+	// Ungrouping puts it back on the permissive default.
+	if err := ps.UnassignDevices([]string{clientDevice}); err != nil {
+		t.Fatalf("UnassignDevices: %v", err)
+	}
+	if !ps.AllowTRPForNode(store, clientDevice) {
+		t.Error("an ungrouped client device must be allowed, or the feature would break existing setups")
+	}
+}
+
+// A device that is both a peer and a tun client is grouped by its public key,
+// because that is the identity the packet filter resolves. The device-id map is
+// only a fallback, so a peer device never ends up in two groups at once.
+func TestPeerDeviceIDIsGroupedByPublicKeyNotDeviceID(t *testing.T) {
+	dir := t.TempDir()
+	store := NewPeerStore(dir)
+	if err := store.Load(); err != nil {
+		t.Fatalf("peer load: %v", err)
+	}
+	ps := NewPolicyStore(dir)
+	if err := ps.Load(); err != nil {
+		t.Fatalf("policy load: %v", err)
+	}
+	const peerKey = "peerkeypeerkeypeerkeypeerkeypeerkeypeerkeypeerkey="
+	const deviceID = "wgdev01"
+	store.Add(&PeerRecord{PublicKey: peerKey, DeviceID: deviceID})
+	byPeer, err := ps.Create("Peers", PolicyGroup{Name: "Peers"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := ps.Update(byPeer.ID, PolicyGroup{ID: byPeer.ID, Name: "Peers"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := ps.Assign(byPeer.ID, []string{peerKey}, func(k string) bool { return k == peerKey }); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	// The peer's group denies TRP, and that is what must apply.
+	if ps.AllowTRPForNode(store, deviceID) {
+		t.Error("a peer device must be evaluated through its public key group")
+	}
+}
+
+// Device-id membership and peer membership are the same file, so a restart must
+// restore both without one overwriting the other.
+func TestDeviceMembershipSurvivesReload(t *testing.T) {
+	dir := t.TempDir()
+	store := NewPeerStore(dir)
+	if err := store.Load(); err != nil {
+		t.Fatalf("peer load: %v", err)
+	}
+	ps := NewPolicyStore(dir)
+	if err := ps.Load(); err != nil {
+		t.Fatalf("policy load: %v", err)
+	}
+	const peerKey = "peerkeypeerkeypeerkeypeerkeypeerkeypeerkeypeerkey="
+	const clientDevice = "abcd1234"
+	store.Add(&PeerRecord{PublicKey: peerKey})
+	g, err := ps.Create("Guests", PolicyGroup{Name: "Guests"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := ps.Update(g.ID, PolicyGroup{ID: g.ID, Name: "Guests"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := ps.Assign(g.ID, []string{peerKey}, func(k string) bool { return k == peerKey }); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if err := ps.AssignDevices(g.ID, []string{clientDevice}, func(string) bool { return true }, func(string) bool { return false }); err != nil {
+		t.Fatalf("AssignDevices: %v", err)
+	}
+
+	reloaded := NewPolicyStore(dir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.GroupForPeer(peerKey); got == nil || got.ID != g.ID {
+		t.Error("peer membership did not survive a reload")
+	}
+	if got := reloaded.GroupForDevice(clientDevice); got == nil || got.ID != g.ID {
+		t.Error("device-id membership did not survive a reload")
+	}
+}
+
+// A device id that belongs to a WireGuard peer must be refused, or the same
+// device could be placed in two groups and only one would be enforced.
+func TestAssignDevicesRefusesAPeerDeviceID(t *testing.T) {
+	ps := testPolicyStore(t)
+	g, err := ps.Create("Guests", PolicyGroup{Name: "Guests"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	err = ps.AssignDevices(g.ID, []string{"wgdev01"}, func(string) bool { return true }, func(string) bool { return true })
+	if err == nil {
+		t.Fatal("assigning a peer device id must be refused")
+	}
+	if !strings.Contains(err.Error(), "public key") {
+		t.Errorf("error should point at the public key route, got %q", err)
 	}
 }

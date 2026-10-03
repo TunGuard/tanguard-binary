@@ -422,7 +422,7 @@ func TestBackupPolicyValidationRejectsADefaultGroup(t *testing.T) {
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := tc.pf.validateAgainst(nil); err == nil {
+			if _, err := tc.pf.validateAgainst(nil, nil); err == nil {
 				t.Error("a restore must reject this policy before writing anything")
 			}
 		})
@@ -434,7 +434,7 @@ func TestBackupPolicyValidationRejectsADefaultGroup(t *testing.T) {
 		Groups: []*PolicyGroup{{ID: "a", Name: "Guests", AllowWGAccess: true}},
 		Assign: map[string]string{"keyA": "a"},
 	}
-	groups, err := ok.validateAgainst(nil)
+	groups, err := ok.validateAgainst(nil, nil)
 	if err != nil {
 		t.Fatalf("a valid policy was rejected: %v", err)
 	}
@@ -589,5 +589,105 @@ func TestRestoreRejectsAPolicyThatShadowsTheDefaultGroup(t *testing.T) {
 	// Nothing may have been written.
 	if _, err := os.Stat(filepath.Join(dir, "policy_groups.json")); !os.IsNotExist(err) {
 		t.Error("a rejected archive must not leave policy_groups.json behind")
+	}
+}
+
+// The policy page used to list only WireGuard peers, so a tun-client device was
+// invisible: it could not be seen and, because enforcement resolved a device id
+// through the peer list, not even restricted. Both kinds of device have to show
+// up, each labelled by how it is grouped.
+func TestPolicyGroupsListsClientDevices(t *testing.T) {
+	hub, _ := newTRPHub(t)
+	node, err := hub.addNode("edge-phone", "")
+	if err != nil {
+		t.Fatalf("addNode: %v", err)
+	}
+	// A client reports its identity on connect; that is what a policy group can
+	// name it by.
+	hub.setDeviceID(node.ID, "phone001")
+
+	store := NewPeerStore(t.TempDir())
+	if err := store.Load(); err != nil {
+		t.Fatalf("peer load: %v", err)
+	}
+	store.Add(&PeerRecord{PublicKey: "peerkeypeerkeypeerkeypeerkeypeerkeypeerkeypeerkey=", AllowedIP: "10.100.0.2/32", DeviceID: "wgdev01"})
+
+	a := &API{store: store, policies: testPolicyStore(t), wg: new(WgServer)}
+	rec := httptest.NewRecorder()
+	a.handlePolicyGroups(rec, httptest.NewRequest("GET", "/api/policy/groups", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Peers []struct {
+			PublicKey    string `json:"public_key"`
+			DeviceID     string `json:"device_id"`
+			DeviceName   string `json:"device_name"`
+			ClientDevice bool   `json:"client_device"`
+			GroupID      string `json:"group_id"`
+		} `json:"peers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var sawPeer, sawClient bool
+	for _, d := range got.Peers {
+		if d.ClientDevice {
+			sawClient = true
+			if d.DeviceID != "phone001" {
+				t.Errorf("client device listed with device id %q, want phone001", d.DeviceID)
+			}
+			if d.DeviceName != "edge-phone" {
+				t.Errorf("client device name %q, want edge-phone", d.DeviceName)
+			}
+			if d.PublicKey != "" {
+				t.Errorf("a client device must not claim a public key: %q", d.PublicKey)
+			}
+		} else if d.PublicKey != "" {
+			sawPeer = true
+		}
+	}
+	if !sawClient {
+		t.Error("the tun-client device is missing from the devices list")
+	}
+	if !sawPeer {
+		t.Error("the WireGuard peer is missing from the devices list")
+	}
+}
+
+// A client device moves into a group through the device-id endpoint and is then
+// evaluated as a member of it.
+func TestPolicyAPIAssignsClientDeviceByDeviceID(t *testing.T) {
+	// The endpoint only accepts a device id the hub actually knows, so this needs
+	// a real control plane with a connected client behind it.
+	hub, _ := newTRPHub(t)
+	node, err := hub.addNode("edge-phone", "")
+	if err != nil {
+		t.Fatalf("addNode: %v", err)
+	}
+	hub.setDeviceID(node.ID, "phone001")
+	base, _, policies := policyAPIServer(t)
+	code, res := policyCall(t, base, "POST", "/api/policy/group/create", `{"name":"Guests"}`)
+	if code != 200 {
+		t.Fatalf("create: %d %v", code, res)
+	}
+	grp, _ := res["group"].(map[string]interface{})
+	groupID, _ := grp["id"].(string)
+	if groupID == "" {
+		t.Fatalf("no group id in %v", res)
+	}
+
+	code, res = policyCall(t, base, "POST", "/api/policy/group/assign-device",
+		`{"id":"`+groupID+`","devices":["phone001"]}`)
+	if code != 200 {
+		t.Fatalf("assign-device: %d %v", code, res)
+	}
+	if got := policies.GroupForDevice("phone001"); got == nil || got.ID != groupID {
+		t.Error("the client device was not placed in the group")
+	}
+	// And it is enforced, which was the whole point.
+	if policies.AllowTRPForNode(nil, "phone001") {
+		t.Error("a client device in a deny-all group must not be allowed as a TRP target")
 	}
 }

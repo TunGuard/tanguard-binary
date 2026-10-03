@@ -18,33 +18,57 @@ func registerPolicyRoutes(mux *http.ServeMux, a *API) {
 	mux.Handle("/api/policy/group/delete", guard(a.handlePolicyGroupDelete))
 	mux.Handle("/api/policy/group/assign", guard(a.handlePolicyGroupAssign))
 	mux.Handle("/api/policy/group/unassign", guard(a.handlePolicyGroupUnassign))
+	mux.Handle("/api/policy/group/assign-device", guard(a.handlePolicyDeviceAssign))
+	mux.Handle("/api/policy/group/unassign-device", guard(a.handlePolicyDeviceUnassign))
 	mux.Handle("/api/policy/apply", guard(a.handlePolicyGroupApply))
 }
 
-// peerInfo is the one view of a peer the policy page needs: enough to render a
+// peerInfo is the one view of a device the policy page needs: enough to render a
 // checkbox, and nothing secret.
+//
+// A device is one of two kinds. A WireGuard peer is named by PublicKey, because
+// that is what the packet filter resolves a tunnel address to. A tun-client
+// device with no peer has only DeviceID to go by, so ClientDevice marks it and
+// the page groups it by device id instead. A device that is both is listed once,
+// as its peer, which is the identity enforcement uses for it anyway.
 type peerInfo struct {
-	PublicKey  string `json:"public_key"`
-	DeviceID   string `json:"device_id,omitempty"`
-	DeviceName string `json:"device_name,omitempty"`
-	AllowedIP  string `json:"allowed_ip"`
-	GroupID    string `json:"group_id"`
-	GroupName  string `json:"group_name"`
+	PublicKey    string `json:"public_key,omitempty"`
+	DeviceID     string `json:"device_id,omitempty"`
+	DeviceName   string `json:"device_name,omitempty"`
+	AllowedIP    string `json:"allowed_ip,omitempty"`
+	GroupID      string `json:"group_id"`
+	GroupName    string `json:"group_name,omitempty"`
+	ClientDevice bool   `json:"client_device,omitempty"`
 }
 
-// label is what the page shows for a device, falling back to the public key
-// when no name was given. shortKey is length-safe: peers.json is not validated
-// on load, so a truncated key must not be able to panic this handler.
+// id is what the page sends back to move this device between groups.
+func (p peerInfo) id() string {
+	if p.PublicKey != "" {
+		return p.PublicKey
+	}
+	return p.DeviceID
+}
+
+// label is what the page shows for a device, falling back to whichever identity
+// the device has. shortKey is length-safe: peers.json is not validated on load,
+// so a truncated key must not be able to panic this handler.
 func (p peerInfo) label() string {
 	if p.DeviceName != "" {
 		return p.DeviceName
 	}
-	return shortKey(p.PublicKey)
+	if p.PublicKey != "" {
+		return shortKey(p.PublicKey)
+	}
+	return p.DeviceID
 }
 
 func (a *API) peerPolicyInfo() []peerInfo {
 	peers := a.store.All()
 	out := make([]peerInfo, 0, len(peers))
+	// Device ids already represented by a peer. A client device that is also a
+	// peer must not appear twice, or the page would offer the same device under
+	// two identities and only one of them would be the one enforced.
+	listed := make(map[string]bool, len(peers))
 	for _, p := range peers {
 		info := peerInfo{
 			PublicKey:  p.PublicKey,
@@ -53,17 +77,39 @@ func (a *API) peerPolicyInfo() []peerInfo {
 			AllowedIP:  p.AllowedIP,
 			GroupID:    DefaultPolicyGroupID,
 		}
+		if p.DeviceID != "" {
+			listed[p.DeviceID] = true
+		}
 		if group := a.policies.GroupForPeer(p.PublicKey); group != nil {
 			info.GroupID = group.ID
 			info.GroupName = group.Name
 		}
 		out = append(out, info)
 	}
+	// Then the tun-client devices that have no peer of their own.
+	if h := meshHub; h != nil {
+		for _, rec := range h.clientDevices() {
+			if listed[rec.DeviceID] {
+				continue
+			}
+			info := peerInfo{
+				DeviceID:     rec.DeviceID,
+				DeviceName:   rec.Name,
+				GroupID:      DefaultPolicyGroupID,
+				ClientDevice: true,
+			}
+			if group := a.policies.GroupForDevice(rec.DeviceID); group != nil {
+				info.GroupID = group.ID
+				info.GroupName = group.Name
+			}
+			out = append(out, info)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].label() != out[j].label() {
 			return out[i].label() < out[j].label()
 		}
-		return out[i].PublicKey < out[j].PublicKey
+		return out[i].id() < out[j].id()
 	})
 	return out
 }
@@ -85,9 +131,11 @@ func (a *API) handlePolicyGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	all := a.peerPolicyInfo()
+	// Keyed by whichever identity the device is grouped by, so a client device
+	// with no public key resolves as readily as a peer does.
 	byKey := make(map[string]peerInfo, len(all))
 	for _, p := range all {
-		byKey[p.PublicKey] = p
+		byKey[p.id()] = p
 	}
 
 	// A device belongs to the default group exactly when it is not assigned
@@ -101,6 +149,9 @@ func (a *API) handlePolicyGroups(w http.ResponseWriter, r *http.Request) {
 		for _, key := range a.policies.Members(g.ID) {
 			custom[key] = true
 		}
+		for _, deviceID := range a.policies.DeviceMembers(g.ID) {
+			custom[deviceID] = true
+		}
 	}
 
 	groups := a.policies.List()
@@ -112,9 +163,14 @@ func (a *API) handlePolicyGroups(w http.ResponseWriter, r *http.Request) {
 				v.Devices = append(v.Devices, info)
 			}
 		}
+		for _, deviceID := range a.policies.DeviceMembers(g.ID) {
+			if info, ok := byKey[deviceID]; ok {
+				v.Devices = append(v.Devices, info)
+			}
+		}
 		if g.ID == DefaultPolicyGroupID {
 			for _, info := range all {
-				if !custom[info.PublicKey] {
+				if !custom[info.id()] {
 					v.Devices = append(v.Devices, info)
 				}
 			}
@@ -283,6 +339,60 @@ func (a *API) handlePolicyGroupAssign(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": req.ID})
 }
 
+// clientDeviceLookup is the device-id predicate for policy membership. With the
+// control plane disabled there are no tun-client devices at all, so every
+// device-id membership is rejected as unknown rather than quietly accepted.
+func clientDeviceLookup() func(string) bool {
+	h := meshHub
+	if h == nil {
+		return func(string) bool { return false }
+	}
+	return h.hasDeviceID
+}
+
+// isPeerDevice reports whether a device id belongs to a WireGuard peer. Those
+// are grouped by public key, so they are refused here to keep one device in
+// exactly one group.
+func (a *API) isPeerDevice(deviceID string) bool {
+	_, ok := a.store.PublicKeyForDeviceID(deviceID)
+	return ok
+}
+
+// handlePolicyDeviceAssign moves tun-client devices into a group. They are
+// named by device id because a client-only device has no WireGuard peer and so
+// no public key.
+func (a *API) handlePolicyDeviceAssign(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.decodeDeviceList(w, r)
+	if !ok {
+		return
+	}
+	err := a.policies.AssignDevices(req.ID, req.Devices, clientDeviceLookup(), a.isPeerDevice)
+	if err != nil {
+		jsonErr(w, 400, err.Error())
+		return
+	}
+	name := req.ID
+	if group := a.policies.Group(req.ID); group != nil {
+		name = group.Name
+	}
+	log.Printf("[policy] moved %d client device(s) into group %q", len(req.Devices), name)
+	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": req.ID})
+}
+
+// handlePolicyDeviceUnassign returns tun-client devices to the default group.
+func (a *API) handlePolicyDeviceUnassign(w http.ResponseWriter, r *http.Request) {
+	req, ok := a.decodeDeviceList(w, r)
+	if !ok {
+		return
+	}
+	if err := a.policies.UnassignDevices(req.Devices); err != nil {
+		jsonErr(w, 400, err.Error())
+		return
+	}
+	log.Printf("[policy] returned %d client device(s) to the default group", len(req.Devices))
+	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": DefaultPolicyGroupID})
+}
+
 func (a *API) handlePolicyGroupUnassign(w http.ResponseWriter, r *http.Request) {
 	req, ok := a.decodeDeviceList(w, r)
 	if !ok {
@@ -303,7 +413,7 @@ func (a *API) handlePolicyGroupApply(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.policies.Apply(req, func(key string) bool {
 		return a.store.Get(key) != nil
-	})
+	}, clientDeviceLookup())
 	if err != nil {
 		jsonErr(w, 400, err.Error())
 		return
@@ -312,7 +422,7 @@ func (a *API) handlePolicyGroupApply(w http.ResponseWriter, r *http.Request) {
 	members := 0
 	for _, g := range groups {
 		if g.ID != DefaultPolicyGroupID {
-			members += len(a.policies.Members(g.ID))
+			members += len(a.policies.Members(g.ID)) + len(a.policies.DeviceMembers(g.ID))
 		}
 	}
 	log.Printf("[policy] applied: %d custom group(s), %d assigned device(s)", len(groups)-1, members)

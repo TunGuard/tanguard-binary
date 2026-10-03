@@ -19,7 +19,12 @@ func TestSaveNodesConcurrent(t *testing.T) {
 	t.Setenv("CONTROL_LISTEN", ctrl)
 	t.Setenv("RELAY_LISTEN", relay)
 	t.Setenv("MESH_DATA_DIR", dir)
+	// StartMesh installs a package-level hub, so put back the previous
+	// one: leaving a closed hub behind would surface its stale devices
+	// in a later test that lists them.
+	savedHub := meshHub
 	h := StartMesh(nil)
+	t.Cleanup(func() { meshHub = savedHub })
 	if h == nil {
 		t.Fatal("nil hub")
 	}

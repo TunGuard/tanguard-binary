@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -152,6 +153,44 @@ func (h *MeshHub) SetPolicy(policies *PolicyStore, peers *PeerStore) {
 	h.policies = policies
 	h.peers = peers
 	h.mu.Unlock()
+}
+
+// clientDevices lists the tun-client devices the hub knows about, oldest first.
+// These are the devices that have no WireGuard peer to name them by, so they
+// are the ones the policy layer has to identify by device id. A node whose
+// device id is empty has not reported an identity yet, so there is nothing to
+// group it by and it is left out.
+func (h *MeshHub) clientDevices() []*NodeRecord {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	out := make([]*NodeRecord, 0, len(h.nodes))
+	for _, rec := range h.nodes {
+		if rec.DeviceID == "" {
+			continue
+		}
+		cp := *rec
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// hasDeviceID reports whether any node reports this device id.
+func (h *MeshHub) hasDeviceID(deviceID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, rec := range h.nodes {
+		if rec.DeviceID == deviceID {
+			return true
+		}
+	}
+	return false
 }
 
 // nodePolicyDevice returns the device id behind a mesh node, plus the stores

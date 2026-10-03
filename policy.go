@@ -72,13 +72,20 @@ func (g *PolicyGroup) Allows(c Capability) bool {
 	return false
 }
 
-// PolicyFile is the on-disk shape: the groups plus the peer-public-key to
-// group-id map. Keeping both in one file means a restore can never pair a
-// membership with a group that no longer exists.
+// PolicyFile is the on-disk shape: the groups plus the two membership maps.
+// Keeping all of it in one file means a restore can never pair a membership
+// with a group that no longer exists.
+//
+// Assign holds WireGuard peers, keyed by public key, because the public key is
+// also what the packet filter resolves a tunnel address to. A tun client that
+// never appears in peers.json has no public key to name it by, so DeviceAssign
+// holds those by device id. The two maps never overlap: a device id that belongs
+// to a peer is grouped through Assign, so a device always has exactly one group.
 type PolicyFile struct {
-	Groups    []*PolicyGroup    `json:"groups"`
-	Assign    map[string]string `json:"assign,omitempty"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	Groups       []*PolicyGroup    `json:"groups"`
+	Assign       map[string]string `json:"assign,omitempty"`
+	DeviceAssign map[string]string `json:"device_assign,omitempty"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // PolicyStore holds every policy group and the peer to group mapping.
@@ -88,11 +95,15 @@ type PolicyFile struct {
 // the default group, so leaving the feature alone is indistinguishable from
 // not having it.
 type PolicyStore struct {
-	mu       sync.RWMutex
-	groups   map[string]*PolicyGroup
-	assign   map[string]string // peer public key -> group id
-	filePath string
-	loaded   bool
+	mu     sync.RWMutex
+	groups map[string]*PolicyGroup
+	assign map[string]string // peer public key -> group id
+	// deviceAssign is the same mapping for devices that have no peer record,
+	// keyed by device id. It is only consulted once the device-id-to-peer
+	// lookup has come up empty, so a device that is both stays in one group.
+	deviceAssign map[string]string // device id -> group id
+	filePath     string
+	loaded       bool
 	// active reports whether any custom group exists. While it is false no peer
 	// can be in anything but the default group, so every policy decision is
 	// "allow" and the packet filter short-circuits on one atomic load instead
@@ -103,9 +114,10 @@ type PolicyStore struct {
 
 func NewPolicyStore(dataDir string) *PolicyStore {
 	return &PolicyStore{
-		groups:   make(map[string]*PolicyGroup),
-		assign:   make(map[string]string),
-		filePath: filepath.Join(dataDir, "policy_groups.json"),
+		groups:       make(map[string]*PolicyGroup),
+		assign:       make(map[string]string),
+		deviceAssign: make(map[string]string),
+		filePath:     filepath.Join(dataDir, "policy_groups.json"),
 	}
 }
 
@@ -193,9 +205,18 @@ func (ps *PolicyStore) Load() error {
 			assign[pubKey] = DefaultPolicyGroupID
 		}
 	}
+	deviceAssign := make(map[string]string, len(pf.DeviceAssign))
+	for deviceID, id := range pf.DeviceAssign {
+		if _, ok := groups[id]; ok {
+			deviceAssign[deviceID] = id
+		} else if id != DefaultPolicyGroupID {
+			deviceAssign[deviceID] = DefaultPolicyGroupID
+		}
+	}
 
 	ps.groups = groups
 	ps.assign = assign
+	ps.deviceAssign = deviceAssign
 	ps.refreshActiveLocked()
 	ps.loaded = true
 	return nil
@@ -210,9 +231,10 @@ func (ps *PolicyStore) Save() error {
 		return nil
 	}
 	pf := PolicyFile{
-		Groups:    make([]*PolicyGroup, 0, len(ps.groups)),
-		Assign:    make(map[string]string, len(ps.assign)),
-		UpdatedAt: time.Now(),
+		Groups:       make([]*PolicyGroup, 0, len(ps.groups)),
+		Assign:       make(map[string]string, len(ps.assign)),
+		DeviceAssign: make(map[string]string, len(ps.deviceAssign)),
+		UpdatedAt:    time.Now(),
 	}
 	for _, g := range ps.groups {
 		if g.ID != DefaultPolicyGroupID {
@@ -221,6 +243,9 @@ func (ps *PolicyStore) Save() error {
 	}
 	for pubKey, id := range ps.assign {
 		pf.Assign[pubKey] = id
+	}
+	for deviceID, id := range ps.deviceAssign {
+		pf.DeviceAssign[deviceID] = id
 	}
 	ps.mu.RUnlock()
 
@@ -260,6 +285,34 @@ func (ps *PolicyStore) Allows(publicKey string, c Capability) bool {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	return ps.groupLocked(publicKey).Allows(c)
+}
+
+// groupForDeviceLocked is the device-id counterpart of groupLocked. It is only
+// the fallback for a device id that resolved to no peer, so a device with both
+// a public key and a device id is grouped by the public key alone and can never
+// end up in two groups. Callers must hold ps.mu.
+func (ps *PolicyStore) groupForDeviceLocked(deviceID string) *PolicyGroup {
+	if id, ok := ps.deviceAssign[deviceID]; ok {
+		if g, ok := ps.groups[id]; ok {
+			return g
+		}
+	}
+	return ps.groups[DefaultPolicyGroupID]
+}
+
+// GroupForDevice returns the group a device id is evaluated against. Used for
+// tun-client devices that have no WireGuard peer to name them by.
+func (ps *PolicyStore) GroupForDevice(deviceID string) *PolicyGroup {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	return ps.groupForDeviceLocked(deviceID)
+}
+
+// AllowsDevice reports whether a device id may use a capability.
+func (ps *PolicyStore) AllowsDevice(deviceID string, c Capability) bool {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	return ps.groupForDeviceLocked(deviceID).Allows(c)
 }
 
 // List returns every group ordered default-first then by creation time.
@@ -468,6 +521,63 @@ func (ps *PolicyStore) Unassign(publicKeys []string) error {
 	return ps.Save()
 }
 
+// AssignDevices moves client-only devices into a group by device id. Unknown
+// ids are rejected so a typo cannot silently create a phantom membership, and
+// so can an id that belongs to a WireGuard peer: that device is grouped by
+// public key, and accepting it here would give one device two groups.
+func (ps *PolicyStore) AssignDevices(groupID string, deviceIDs []string, known, isPeer func(string) bool) error {
+	ps.mu.Lock()
+	g, ok := ps.groups[groupID]
+	if !ok {
+		ps.mu.Unlock()
+		return fmt.Errorf("group not found")
+	}
+	if g.Builtin {
+		ps.mu.Unlock()
+		return fmt.Errorf("devices belong to the default group unless you move them")
+	}
+	for _, id := range deviceIDs {
+		if isPeer != nil && isPeer(id) {
+			ps.mu.Unlock()
+			return fmt.Errorf("device %q is a WireGuard peer, group it by its public key instead", id)
+		}
+		if !known(id) {
+			ps.mu.Unlock()
+			return fmt.Errorf("unknown device %q", id)
+		}
+	}
+	for _, id := range deviceIDs {
+		ps.deviceAssign[id] = groupID
+	}
+	ps.mu.Unlock()
+	return ps.Save()
+}
+
+// UnassignDevices returns client-only devices to the default group.
+func (ps *PolicyStore) UnassignDevices(deviceIDs []string) error {
+	ps.mu.Lock()
+	for _, id := range deviceIDs {
+		delete(ps.deviceAssign, id)
+	}
+	ps.mu.Unlock()
+	return ps.Save()
+}
+
+// DeviceMembers lists the device ids in a group.
+func (ps *PolicyStore) DeviceMembers(groupID string) []string {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+
+	var out []string
+	for id, gid := range ps.deviceAssign {
+		if gid == groupID {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Apply replaces the entire policy state with pf in one shot, which is what an
 // automation client wants: one call declares every group and every device's
 // membership, instead of a create/assign call per device.
@@ -476,8 +586,8 @@ func (ps *PolicyStore) Unassign(publicKeys []string) error {
 // taken from the payload, so applying a policy can never lock every device out
 // of the network. Memberships naming an unknown device are rejected and nothing
 // is changed.
-func (ps *PolicyStore) Apply(pf PolicyFile, known func(string) bool) error {
-	groups, err := pf.validateAgainst(known)
+func (ps *PolicyStore) Apply(pf PolicyFile, known, knownDevice func(string) bool) error {
+	groups, err := pf.validateAgainst(known, knownDevice)
 	if err != nil {
 		return err
 	}
@@ -489,10 +599,18 @@ func (ps *PolicyStore) Apply(pf PolicyFile, known func(string) bool) error {
 		}
 		assign[pubKey] = id
 	}
+	deviceAssign := make(map[string]string, len(pf.DeviceAssign))
+	for deviceID, id := range pf.DeviceAssign {
+		if id == "" || id == DefaultPolicyGroupID {
+			continue
+		}
+		deviceAssign[deviceID] = id
+	}
 
 	ps.mu.Lock()
 	ps.groups = groups
 	ps.assign = assign
+	ps.deviceAssign = deviceAssign
 	ps.refreshActiveLocked()
 	ps.mu.Unlock()
 	return ps.Save()
@@ -503,10 +621,12 @@ func (ps *PolicyStore) Apply(pf PolicyFile, known func(string) bool) error {
 // fully valid map or an error and the live state is untouched, which is what
 // makes an apply atomic.
 //
-// known reports whether a public key belongs to a real peer. Pass nil to skip
-// that check, which is what the restore path wants: a backup carries its own
-// peers.json, and the peer list is validated separately during the restore.
-func (pf PolicyFile) validateAgainst(known func(string) bool) (map[string]*PolicyGroup, error) {
+// known reports whether a public key belongs to a real peer. knownDevice does
+// the same for a device id, for tun-client devices that have no peer. Pass nil
+// to skip either check, which is what the restore path wants: a backup carries
+// its own peers.json and nodes.json, and those are validated separately during
+// the restore.
+func (pf PolicyFile) validateAgainst(known, knownDevice func(string) bool) (map[string]*PolicyGroup, error) {
 	groups := make(map[string]*PolicyGroup, len(pf.Groups)+1)
 	groups[DefaultPolicyGroupID] = defaultGroup()
 	for _, g := range pf.Groups {
@@ -550,35 +670,54 @@ func (pf PolicyFile) validateAgainst(known func(string) bool) (map[string]*Polic
 			return nil, fmt.Errorf("unknown device %q", pubKey)
 		}
 	}
+	for deviceID, id := range pf.DeviceAssign {
+		if id == "" || id == DefaultPolicyGroupID {
+			continue
+		}
+		if _, ok := groups[id]; !ok {
+			return nil, fmt.Errorf("device %q references unknown group %q", deviceID, id)
+		}
+		if knownDevice != nil && !knownDevice(deviceID) {
+			return nil, fmt.Errorf("unknown device %q", deviceID)
+		}
+	}
 	return groups, nil
 }
 
+// allowsForNode is the single resolution point for a tun control node's device.
+//
+// A device id that matches a peer is evaluated through that peer's public key,
+// which is the identity the rest of the policy layer already uses. A device id
+// with no peer is a client-only device, and it is evaluated through its own
+// device-id membership so an operator can still restrict it. Before device-id
+// membership existed the second case fell straight through to "allow", which
+// left every tun-client device outside the policy layer entirely.
+//
+// An unresolvable device, and any device the operator has not moved into a
+// group, lands on the permissive default group. That is what keeps P2P and TRP
+// working exactly as before for anyone who has not used policy groups.
+func (ps *PolicyStore) allowsForNode(store *PeerStore, deviceID string, c Capability) bool {
+	if ps == nil || deviceID == "" {
+		return true
+	}
+	if store != nil {
+		if pubKey, ok := store.PublicKeyForDeviceID(deviceID); ok {
+			return ps.Allows(pubKey, c)
+		}
+	}
+	return ps.AllowsDevice(deviceID, c)
+}
+
 // AllowP2PMeshForNode reports whether the device behind a tun control node may
-// take part in the automatic mesh. A node with no matching peer record has no
-// policy group of its own and is allowed, keeping P2P working exactly as before
-// for anyone who has not used the policy layer. A nil store means no policy
-// layer at all, which likewise allows everything.
+// take part in the automatic mesh. A nil store means no policy layer at all,
+// which likewise allows everything.
 func (ps *PolicyStore) AllowP2PMeshForNode(store *PeerStore, deviceID string) bool {
-	if ps == nil || store == nil || deviceID == "" {
-		return true
-	}
-	pubKey, ok := store.PublicKeyForDeviceID(deviceID)
-	if !ok {
-		return true
-	}
-	return ps.Allows(pubKey, CapP2PMesh)
+	return ps.allowsForNode(store, deviceID, CapP2PMesh)
 }
 
 // AllowTRPForNode is the TRP counterpart of AllowP2PMeshForNode.
 func (ps *PolicyStore) AllowTRPForNode(store *PeerStore, deviceID string) bool {
-	if ps == nil || store == nil || deviceID == "" {
-		return true
-	}
-	pubKey, ok := store.PublicKeyForDeviceID(deviceID)
-	if !ok {
-		return true
-	}
-	return ps.Allows(pubKey, CapTRP)
+	return ps.allowsForNode(store, deviceID, CapTRP)
 }
 
 // tunnelNet is a parsed CIDR used by the packet filter to tell tunnel-internal

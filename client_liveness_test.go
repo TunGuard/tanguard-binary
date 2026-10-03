@@ -49,7 +49,12 @@ func startHubOn7000(t *testing.T, dir string) *MeshHub {
 		t.Fatalf("hub data dir: %v", err)
 	}
 
+	// StartMesh installs a package-level hub, so put back the previous
+	// one: leaving a closed hub behind would surface its stale devices
+	// in a later test that lists them.
+	savedHub := meshHub
 	h := StartMesh(nil)
+	t.Cleanup(func() { meshHub = savedHub })
 	if h == nil {
 		t.Fatal("StartMesh returned nil")
 	}

@@ -598,8 +598,25 @@ curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/assign \
 
 # Back to the Default Global Group
 curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/unassign \
-  -d '{"id":"7f3a1c22","devices":["PEER_PUBKEY_HEX"]}'
+  -d '{"id":"7f3a1c22","devices":["PEER_PUBKEY_HEX"]}
 ```
+
+Both endpoints take WireGuard peers, named by public key. A tun-client device
+that has no peer of its own is named by its device id instead, and moves through
+its own pair of endpoints:
+
+```bash
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/assign-device \
+  -d '{"id":"7f3a1c22","devices":["abcd1234"]}'
+
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/unassign-device \
+  -d '{"id":"7f3a1c22","devices":["abcd1234"]}'
+```
+
+A device that is both a peer and a tun client is grouped by its public key, and
+its device id is refused by `assign-device`, so one device is never in two groups
+at once. The device list at `GET /api/policy/groups` returns both kinds, with
+`client_device` set on the ones that have no peer.
 
 A group must be empty before it can be deleted:
 

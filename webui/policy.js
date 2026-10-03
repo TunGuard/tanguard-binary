@@ -21,13 +21,24 @@ const RULES = [
   { field: 'allow_wg_access',    el: 'rule-wg',    label: 'WireGuard internet' }
 ];
 
+// A device is identified by its public key when it is a WireGuard peer, and by
+// its device id when it is a tun-client device with no peer. The API groups it
+// the same way, so the page has to send back whichever one it was given.
+function deviceIdentity(p) {
+  return p.public_key || p.device_id || '';
+}
+
 function deviceLabel(p) {
   if (p.device_name) return p.device_name;
-  return (p.public_key || '').slice(0, 8) + '…';
+  if (p.public_key) return p.public_key.slice(0, 8) + '…';
+  return p.device_id || 'unknown device';
 }
 
 function deviceMeta(p) {
   const bits = [];
+  // Label the kind, so an operator can tell a WireGuard peer from a tun-client
+  // device at a glance. They are grouped through different identities.
+  bits.push(p.client_device ? 'client' : 'peer');
   if (p.allowed_ip) bits.push(p.allowed_ip);
   if (p.device_id) bits.push('id ' + p.device_id);
   return bits.join('  ·  ');
@@ -125,7 +136,7 @@ function renderGroupCard(g) {
         <div class="policy-device-name">${escapeHtml(deviceLabel(d))}</div>
         <div class="policy-device-meta">${escapeHtml(deviceMeta(d))}</div>
       </div>
-      ${builtin ? '' : `<button class="btn btn-sm btn-outline" onclick="removeDevice('${g.id}', '${d.public_key}')">Remove</button>`}
+      ${builtin ? '' : `<button class="btn btn-sm btn-outline" onclick="removeDevice('${g.id}', '${deviceIdentity(d)}', '${d.client_device ? 'client' : 'peer'}')">Remove</button>`}
     </div>`).join('')
     : `<div class="policy-device-meta" style="padding:8px 0">No devices in this group.</div>`;
 
@@ -238,19 +249,20 @@ function openDevices(groupID) {
     'Add Devices to ' + (g ? g.name : 'group');
   hideError('device-error');
 
-  const inGroup = new Set((g && g.devices || []).map(d => d.public_key));
+  const inGroup = new Set((g && g.devices || []).map(deviceIdentity));
   const picker = document.getElementById('device-picker');
 
   if (!policyPeers.length) {
-    picker.innerHTML = '<div class="policy-device-meta" style="padding:12px 0">No devices exist yet. Add a peer first.</div>';
+    picker.innerHTML = '<div class="policy-device-meta" style="padding:12px 0">No devices exist yet. Add a peer or connect a client.</div>';
   } else {
     picker.innerHTML = policyPeers.map(p => {
-      const here = inGroup.has(p.public_key);
+      const here = inGroup.has(deviceIdentity(p));
       // A device already in this group cannot be re-added; one in another
       // group can, which moves it here.
       const where = here ? 'already in this group' : (p.group_name || 'Default Global Group');
+      const kind = p.client_device ? 'client' : 'peer';
       return `<label class="policy-picker-row${here ? ' disabled' : ''}">
-        <input type="checkbox" value="${escapeHtml(p.public_key)}" ${here ? 'disabled' : ''}>
+        <input type="checkbox" value="${escapeHtml(deviceIdentity(p))}" data-kind="${kind}" ${here ? 'disabled' : ''}>
         <span style="flex:1">
           <span class="policy-device-name">${escapeHtml(deviceLabel(p))}</span>
           <span class="policy-device-meta" style="display:block">${escapeHtml(deviceMeta(p))}  ·  ${escapeHtml(where)}</span>
@@ -266,18 +278,27 @@ function closeDeviceModal() {
 }
 
 async function submitDevices() {
-  const boxes = document.querySelectorAll('#device-picker input[type=checkbox]:checked');
-  const devices = Array.from(boxes).map(b => b.value);
-  if (!devices.length) {
+  const boxes = Array.from(document.querySelectorAll('#device-picker input[type=checkbox]:checked'));
+  if (!boxes.length) {
     showError('device-error', 'Select at least one device');
     return;
   }
+  // Peers and client devices are grouped through different endpoints, because
+  // they are named by different identities.
+  const peers = boxes.filter(b => b.dataset.kind !== 'client').map(b => b.value);
+  const clients = boxes.filter(b => b.dataset.kind === 'client').map(b => b.value);
+  const total = boxes.length;
   const btn = document.getElementById('device-submit');
   btn.disabled = true;
   try {
-    await postJSON('/api/policy/group/assign', { id: deviceTargetID, devices });
+    if (peers.length) {
+      await postJSON('/api/policy/group/assign', { id: deviceTargetID, devices: peers });
+    }
+    if (clients.length) {
+      await postJSON('/api/policy/group/assign-device', { id: deviceTargetID, devices: clients });
+    }
     closeDeviceModal();
-    showToast('Moved ' + devices.length + ' device' + (devices.length === 1 ? '' : 's') + ' into the group', 'success');
+    showToast('Moved ' + total + ' device' + (total === 1 ? '' : 's') + ' into the group', 'success');
     await loadPolicy();
   } catch (e) {
     showError('device-error', e.message);
@@ -286,9 +307,10 @@ async function submitDevices() {
   }
 }
 
-async function removeDevice(groupID, publicKey) {
+async function removeDevice(groupID, identity, kind) {
+  const path = kind === 'client' ? '/api/policy/group/unassign-device' : '/api/policy/group/unassign';
   try {
-    await postJSON('/api/policy/group/unassign', { id: groupID, devices: [publicKey] });
+    await postJSON(path, { id: groupID, devices: [identity] });
     showToast('Device returned to the Default Global Group', 'success');
     await loadPolicy();
   } catch (e) {
