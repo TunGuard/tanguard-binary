@@ -5,6 +5,23 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-10-04
+
+### Fixed
+
+- **Tun-client devices were invisible to policy groups, and could not be
+  restricted.** A device that only uses the client has no WireGuard peer, so it
+  was missing from the policy page entirely and, because enforcement resolved a
+  device id through the peer list, no group could deny it anything: it was still
+  allowed to join the mesh and to be the target of a port mapping. The device
+  list now returns both kinds of device, and a client device is grouped by its
+  device id through the new `/api/policy/group/assign-device` and
+  `/api/policy/group/unassign-device` endpoints.
+
+  A device that is both a peer and a tun client is still grouped by its public
+  key, and its device id is refused by `assign-device`, so one device is never
+  in two groups at once.
+
 ## [2.4.0] - 2026-10-03
 
 ### Added
@@ -52,13 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then rebuilt the batch, so a denied packet was counted twice and logged twice.
   It is now a single pass, and an unfiltered batch is handed to the device
   without being copied.
-- **Tun-client devices were invisible to policy groups, and could not be
-  restricted.** A device that only uses the client has no WireGuard peer, so it
-  was missing from the policy page entirely and, because enforcement resolved a
-  device id through the peer list, no group could deny it anything: it was still
-  allowed to join the mesh and to be the target of a port mapping. The device
-  list now returns both kinds of device, and a client device is grouped by its
-  device id through `assign-device`/`unassign-device`.
 - **The policy page could panic on a hand-edited `peers.json`.** `peers.json` is
   not validated on load, and building the response sliced the first 8 bytes of
   the public key; a shorter key crashed the handler. It now uses the existing
