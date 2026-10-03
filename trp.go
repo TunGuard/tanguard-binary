@@ -109,6 +109,9 @@ func (tm *TRPManager) CreateProxy(nodeID, bindIP string, bindPort, targetPort in
 	if tm.hub.getNode(nodeID) == nil {
 		return nil, fmt.Errorf("unknown node")
 	}
+	if !tm.hub.trpAllowed(nodeID) {
+		return nil, fmt.Errorf("the device's policy group does not allow TRP port mapping")
+	}
 	rec := &TRProxy{
 		ID:         meshShortID(),
 		NodeID:     nodeID,
@@ -244,6 +247,15 @@ func (tm *TRPManager) bindingLoop(b *trpBinding) {
 // connection.
 func (tm *TRPManager) servePublic(b *trpBinding, pub net.Conn) {
 	defer pub.Close()
+
+	// Checked here as well as at bind time so moving a device into a
+	// restrictive group takes effect on proxies that are already listening:
+	// the connection is simply closed, exactly like a device that is offline.
+	if !tm.hub.trpAllowed(b.proxy.NodeID) {
+		log.Printf("[trp] %s denied by policy group, dropping connection to %s:%d",
+			b.proxy.NodeID, b.proxy.BindIP, b.proxy.BindPort)
+		return
+	}
 
 	node := tm.hub.getConn(b.proxy.NodeID)
 	if node == nil {

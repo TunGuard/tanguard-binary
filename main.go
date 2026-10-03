@@ -69,10 +69,23 @@ func runMeshOnly(cfg *Config) {
 	log.Printf("[main] tun control plane ready: control=%s relay=%s",
 		hub.cfg.ControlListen, hub.cfg.RelayListen)
 
-	// The API is started with no WireGuard server and no peer store: the mesh
-	// handlers only read the hub, but the routes they share are the normal ones
-	// so the dashboard behaves exactly as it does in a full deployment.
-	api := NewAPI(nil, NewPeerStore(cfg.DataDir), cfg, creds, apiKeys, nil)
+	// P2P and TRP are still policy-filtered here, so the mesh behaves the same
+	// way whether or not WireGuard is running on this host.
+	peers := NewPeerStore(cfg.DataDir)
+	if err := peers.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load peers: %v", err)
+	}
+	policies := NewPolicyStore(cfg.DataDir)
+	if err := policies.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load policy groups: %v", err)
+	}
+	hub.SetPolicy(policies, peers)
+
+	// The API is started with no WireGuard server: the mesh handlers only read
+	// the hub, but the routes they share are the normal ones so the dashboard
+	// behaves exactly as it does in a full deployment.
+	api := NewAPI(nil, peers, cfg, creds, apiKeys, nil)
+	api.policies = policies
 	go api.Start()
 	user := cfg.WebUsername
 	if u, ok := creds.Username(); ok {
@@ -154,7 +167,21 @@ func main() {
 		log.Printf("[main] WARNING: could not load peers: %v", err)
 	}
 
-	wg, err := NewWgServer(cfg, store)
+	// Policy groups are a pure administrative filter loaded before the tunnel
+	// comes up, so the filter is active for the very first packet. A missing
+	// file is normal and yields the permissive default group.
+	policies := NewPolicyStore(cfg.DataDir)
+	if err := policies.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load policy groups: %v", err)
+	}
+	for _, g := range policies.List() {
+		if !g.Builtin {
+			log.Printf("[main] policy group %q restored: inter_device=%v p2p=%v trp=%v wg_access=%v (%d devices)",
+				g.Name, g.AllowInterDevice, g.AllowP2PMesh, g.AllowTRP, g.AllowWGAccess, len(policies.Members(g.ID)))
+		}
+	}
+
+	wg, err := NewWgServer(cfg, store, policies)
 	if err != nil {
 		log.Fatalf("[main] failed to create WireGuard server: %v", err)
 	}
@@ -184,6 +211,7 @@ func main() {
 	monitor.Start()
 
 	api := NewAPI(wg, store, cfg, creds, apiKeys, monitor)
+	api.policies = policies
 	go api.Start()
 
 	// tun control plane: TCP :7000 for node control, UDP :7001 for the P2P
@@ -191,6 +219,9 @@ func main() {
 	if hub := StartMesh(cfg); hub != nil {
 		log.Printf("[main] tun control plane ready: control=%s relay=%s",
 			hub.cfg.ControlListen, hub.cfg.RelayListen)
+		// Policy groups gate the mesh features as well as the tunnel, so the
+		// hub needs the same two stores the filter uses.
+		hub.SetPolicy(policies, store)
 	}
 
 	if cfg.SSHEnabled {
@@ -226,5 +257,6 @@ func main() {
 	cleanupNAT(cfg)
 	wg.Close()
 	store.Save()
+	policies.Save()
 	log.Println("[main] TunGuard stopped")
 }

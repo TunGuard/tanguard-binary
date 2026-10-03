@@ -156,12 +156,15 @@ curl -X POST http://localhost:9000/api/peer/remove \
 
 ## Web Dashboard
 
-The dashboard runs on port **9000** (same port as the API). It is **disabled by default** — enable it with `-web` or `WEB_ENABLED=true`. It has three sections:
+The dashboard runs on port **9000** (same port as the API). It is **disabled by default** — enable it with `-web` or `WEB_ENABLED=true`. Its sections:
 
 | Section | What you can do |
 |---|---|
 | **Dashboard** | Server status, peer count, data transfer totals |
 | **Peers** | List peers, add/generate configs, view status, download configs, scan QR codes, remove peers |
+| **P2P** | Mesh nodes and groups, direct/relayed links, PSK join credentials |
+| **TRP** | TCP port-mapping proxies and their live connections |
+| **Policy Groups** | Restrict what devices in a group may reach — see below |
 | **Settings** | Reference of all configuration options |
 
 The status page refreshes every 10 seconds. You'll see transfer stats, last handshake times, and online/offline status for each peer.
@@ -181,6 +184,42 @@ sudo ./tanguard --reset
 ```
 
 This removes the stored login and restores the default `admin` / `tanguard`. Start the server again and log in to set a new password.
+
+## Policy Groups (optional)
+
+Policy groups are an administrative filter over connections that already exist.
+A group has four switches, and a device is in exactly one group:
+
+| Switch | When off, the group's devices… |
+|---|---|
+| **Allow devices in this group to talk to each other** | cannot reach any other peer on the tunnel, in either direction |
+| **Allow P2P automatic mesh features** | are not punched together and are not offered each other's endpoints |
+| **Allow TRP proxy port mapping features** | cannot be the target of a port mapping on this server |
+| **Allow standard WireGuard internet access** | cannot reach anything outside the tunnel |
+
+**Nothing about a connection changes.** Devices keep the same WireGuard config,
+stay authenticated, and see no error — a blocked packet is silently discarded,
+so a denied device just times out exactly as if the target were unreachable. The
+tunnel itself, and reaching this server, always work regardless of the switches,
+so a misconfigured group can always be fixed from the dashboard or the API.
+
+### The Default Global Group
+
+Every peer starts in the **Default Global Group**, which has all four switches
+**on** and cannot be edited or deleted. A server that has never had a policy
+group created filters nothing at all, so existing deployments see no change in
+behaviour, performance or traffic. Create a group only when you want to start
+restricting something.
+
+Moving devices into a group is explicit: they leave the Default Global Group,
+and removing them returns them to it. A group is always deny-by-default — every
+switch starts off when you create one.
+
+Rules are re-evaluated live, so flipping a switch or moving a device takes
+effect on the next packet, without a restart and without touching the device.
+
+Groups live in `policy_groups.json` inside your `DATA_DIR` (mode 0600), which is
+covered by the usual backup and restore flow.
 
 ## SSH Gateway (optional)
 
@@ -493,6 +532,103 @@ curl -sS -X POST -H "X-API-Key: $API_KEY" \
 
 Note: removing a node does not delete its TRP proxies automatically — remove
 those first with `/api/trp/proxy/remove`, or they keep holding their listeners.
+
+## Policy Groups API (curl)
+
+These endpoints manage the same filter as the **Policy Groups** dashboard page.
+They use the same credentials as the rest of `/api/*`, and `GET` on a
+`POST`-only route returns `405`.
+
+```bash
+API_KEY="REPLACE_WITH_YOUR_KEY"
+H="X-API-Key: $API_KEY"
+JSON="Content-Type: application/json"
+API="http://localhost:9000"
+```
+
+`GET /api/policy/groups` returns every group with its members, the full peer
+list (each peer's `group_id` and `group_name` included), and the drop counters
+the page displays:
+
+```bash
+curl -H "$H" $API/api/policy/groups
+```
+
+```json
+{
+  "groups": [
+    { "id": "default", "name": "Default Global Group", "allow_inter_device": true,
+      "allow_p2p_mesh": true, "allow_trp": true, "allow_wg_access": true,
+      "builtin": true, "devices": [ { "public_key": "…", "allowed_ip": "10.100.0.2/32" } ] },
+    { "id": "7f3a1c22", "name": "Guests", "allow_inter_device": false,
+      "allow_p2p_mesh": false, "allow_trp": false, "allow_wg_access": true, "devices": [] }
+  ],
+  "peers": [ /* every peer, with group_id / group_name */ ],
+  "drop_count": { "inter_device": 0, "internet": 0 }
+}
+```
+
+Creating a group: every omitted switch is **off**, so this group can talk to the
+internet but nothing else:
+
+```bash
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/create \
+  -d '{"name":"Guests","allow_wg_access":true}'
+```
+
+Updating is partial — **only the switches you send are changed**, so flipping
+one rule never silently clears the other three:
+
+```bash
+# Turn on inter-device traffic, leave the other three as they are
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/update \
+  -d '{"id":"7f3a1c22","allow_inter_device":true}'
+```
+
+Moving devices in and out. `assign` is idempotent, so re-sending a device that
+is already in the group is not an error. Assigning moves a device *out* of
+whatever group it was in, including the default one:
+
+```bash
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/assign \
+  -d '{"id":"7f3a1c22","devices":["PEER_PUBKEY_HEX","OTHER_PUBKEY_HEX"]}'
+
+# Back to the Default Global Group
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/unassign \
+  -d '{"id":"7f3a1c22","devices":["PEER_PUBKEY_HEX"]}'
+```
+
+A group must be empty before it can be deleted:
+
+```bash
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/delete -d '{"id":"7f3a1c22"}'
+```
+
+`POST /api/policy/apply` declares the whole policy at once, which is the
+provisioning call — it replaces all custom groups and every membership in a
+single atomic step. Omit `id` to have one generated, and omit a switch to leave
+it off:
+
+```bash
+curl -X POST -H "$H" -H "$JSON" $API/api/policy/apply \
+  -d '{"groups":[{"name":"Guests","allow_wg_access":true},
+                 {"name":"IoT","allow_inter_device":true}],
+       "assign":{"PEER_PUBKEY_HEX":"GROUP_ID","OTHER_PUBKEY_HEX":"GROUP_ID"}}'
+```
+
+Send `{"groups":[],"assign":{}}` to return the server to unrestricted. An
+invalid payload is rejected whole: nothing is changed if any group, name,
+duplicate or unknown membership is bad. The default group is reserved — it can
+never be declared, overridden or deleted, which is what guarantees an apply can
+never lock every device out.
+
+### Policy API errors
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Bad payload — `name required`, `group not found`, `duplicate group id`, `the default group is managed automatically and cannot be declared`, an empty group name, or a membership naming an unknown device or group |
+| `401` | Missing or invalid dashboard login / API key |
+| `405` | `GET` used on a `POST`-only route |
 
 ## License
 

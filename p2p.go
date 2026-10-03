@@ -221,6 +221,11 @@ func (r *P2PRelay) answerRendezvous(src *net.UDPAddr, data []byte) {
 	r.bindEndpoint(sender, src.String())
 
 	group := h.groupOf(sender)
+	if !h.p2pAllowed(sender) {
+		// The device's policy group denies P2P mesh. Answer with nobody so it
+		// learns no peers, exactly as if the relay had nothing to offer.
+		return
+	}
 	type entry struct {
 		id   string
 		addr *net.UDPAddr
@@ -228,6 +233,11 @@ func (r *P2PRelay) answerRendezvous(src *net.UDPAddr, data []byte) {
 	var found []entry
 	for _, peerID := range h.groupMembers(group) {
 		if peerID == sender || len(peerID) != 8 || len(found) >= maxP2PPerNode {
+			continue
+		}
+		if !h.p2pAllowed(peerID) {
+			// Do not hand out a peer whose group denies P2P either: punching is
+			// mutual, and offering one end would make both try.
 			continue
 		}
 		nc := h.getConn(peerID)
@@ -270,6 +280,12 @@ func (r *P2PRelay) route(src *net.UDPAddr, data []byte) {
 	if !ok {
 		return
 	}
+	// A node whose group denies P2P mesh gets its datagrams dropped here, so a
+	// peer that punched it before it was moved keeps seeing a dead link rather
+	// than a working one.
+	if !r.hub.p2pAllowed(sender) {
+		return
+	}
 	r.mu.Lock()
 	srcID, known := r.byEP[src.String()]
 	if !known {
@@ -286,6 +302,9 @@ func (r *P2PRelay) route(src *net.UDPAddr, data []byte) {
 	for _, dstID := range dsts {
 		nc := r.hub.getConn(dstID)
 		if nc == nil {
+			continue
+		}
+		if !r.hub.p2pAllowed(dstID) {
 			continue
 		}
 		nc.mu.Lock()
@@ -573,6 +592,12 @@ func (h *MeshHub) linkGroup(group, restrict string) {
 	for i := 0; i < len(members); i++ {
 		for j := i + 1; j < len(members); j++ {
 			if restrict != "" && members[i] != restrict && members[j] != restrict {
+				continue
+			}
+			// A pair is only punched when both ends' groups allow P2P mesh.
+			// Checking here covers every reconnect and every group change without
+			// the operator touching the mesh.
+			if !h.p2pAllowed(members[i]) || !h.p2pAllowed(members[j]) {
 				continue
 			}
 			pairs = append(pairs, [2]string{members[i], members[j]})

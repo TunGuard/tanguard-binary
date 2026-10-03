@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,13 +27,62 @@ type PeerStore struct {
 	peers    map[string]*PeerRecord
 	filePath string
 	loaded   bool
+	// byIP and byDevice are reverse indexes over peers. The policy packet
+	// filter has to resolve a tunnel address back to a peer on every packet,
+	// so those lookups cannot afford to walk the whole map.
+	byIP     map[uint32]string // tunnel ip -> public key
+	byDevice map[string]string // device id -> public key
 }
 
 func NewPeerStore(dataDir string) *PeerStore {
 	return &PeerStore{
 		peers:    make(map[string]*PeerRecord),
+		byIP:     make(map[uint32]string),
+		byDevice: make(map[string]string),
 		filePath: filepath.Join(dataDir, "peers.json"),
 	}
+}
+
+// indexLocked records a peer's address mappings. Callers must hold ps.mu.
+func (ps *PeerStore) indexLocked(r *PeerRecord) {
+	if ip, ok := allowedIPToUint32(r.AllowedIP); ok {
+		ps.byIP[ip] = r.PublicKey
+	}
+	if r.DeviceID != "" {
+		ps.byDevice[r.DeviceID] = r.PublicKey
+	}
+}
+
+// unindexLocked clears a peer's address mappings. Callers must hold ps.mu.
+func (ps *PeerStore) unindexLocked(r *PeerRecord) {
+	if ip, ok := allowedIPToUint32(r.AllowedIP); ok {
+		if ps.byIP[ip] == r.PublicKey {
+			delete(ps.byIP, ip)
+		}
+	}
+	if r.DeviceID != "" {
+		if ps.byDevice[r.DeviceID] == r.PublicKey {
+			delete(ps.byDevice, r.DeviceID)
+		}
+	}
+}
+
+// allowedIPToUint32 turns a peer's AllowedIP CIDR into the bare tunnel address.
+// The prefix length is ignored on purpose: WireGuard peers hold a single /32
+// here, and the policy filter matches on the address a packet carries.
+func allowedIPToUint32(allowedIP string) (uint32, bool) {
+	ip, _, err := net.ParseCIDR(strings.TrimSpace(allowedIP))
+	if err != nil {
+		ip = net.ParseIP(strings.TrimSpace(allowedIP))
+		if ip == nil {
+			return 0, false
+		}
+	}
+	v4 := ip.To4()
+	if v4 == nil {
+		return 0, false
+	}
+	return binary.BigEndian.Uint32(v4), true
 }
 
 func (ps *PeerStore) Load() error {
@@ -54,8 +105,11 @@ func (ps *PeerStore) Load() error {
 	}
 
 	ps.peers = make(map[string]*PeerRecord, len(records))
+	ps.byIP = make(map[uint32]string, len(records))
+	ps.byDevice = make(map[string]string, len(records))
 	for _, r := range records {
 		ps.peers[r.PublicKey] = r
+		ps.indexLocked(r)
 	}
 	ps.loaded = true
 	return nil
@@ -97,11 +151,15 @@ func (ps *PeerStore) Add(rec *PeerRecord) {
 		return
 	}
 	ps.peers[rec.PublicKey] = rec
+	ps.indexLocked(rec)
 }
 
 func (ps *PeerStore) Remove(publicKey string) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	if r, ok := ps.peers[publicKey]; ok {
+		ps.unindexLocked(r)
+	}
 	delete(ps.peers, publicKey)
 }
 
@@ -109,6 +167,27 @@ func (ps *PeerStore) Get(publicKey string) *PeerRecord {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	return ps.peers[publicKey]
+}
+
+// PublicKeyForIP resolves a tunnel address to the peer that owns it. The policy
+// packet filter calls this on every packet it evaluates.
+func (ps *PeerStore) PublicKeyForIP(ip uint32) (string, bool) {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	key, ok := ps.byIP[ip]
+	return key, ok
+}
+
+// PublicKeyForDeviceID resolves a device id to its peer. The mesh control plane
+// uses it to work out which policy group a tun node belongs to.
+func (ps *PeerStore) PublicKeyForDeviceID(deviceID string) (string, bool) {
+	if deviceID == "" {
+		return "", false
+	}
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	key, ok := ps.byDevice[deviceID]
+	return key, ok
 }
 
 func (ps *PeerStore) AllowedIPInUse(allowedIP string) bool {

@@ -132,9 +132,54 @@ type MeshHub struct {
 	trp         *TRPManager
 	nodesPath   string
 	proxiesPath string
+	// policies gates the mesh features per device. It is nil when no policy
+	// store was attached, which means no gating at all.
+	policies *PolicyStore
+	peers    *PeerStore
 	// listener is kept so the control plane can be shut down; tests use it to
 	// release the port between cases.
 	listener net.Listener
+}
+
+// SetPolicy attaches the policy layer to the control plane. It is called once
+// at startup, after the stores have been loaded. Passing nil leaves every mesh
+// feature open, which is what an untouched deployment sees.
+func (h *MeshHub) SetPolicy(policies *PolicyStore, peers *PeerStore) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.policies = policies
+	h.peers = peers
+	h.mu.Unlock()
+}
+
+// nodePolicyDevice returns the device id behind a mesh node, plus the stores
+// policy decisions are made against. Taking the fields under one read lock and
+// releasing it before the caller touches the stores keeps this safe to call
+// from code that already holds the hub lock elsewhere.
+func (h *MeshHub) nodePolicyDevice(nodeID string) (*PolicyStore, *PeerStore, string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	deviceID := ""
+	if rec := h.nodes[nodeID]; rec != nil {
+		deviceID = rec.DeviceID
+	}
+	return h.policies, h.peers, deviceID
+}
+
+// p2pAllowed reports whether a mesh node may take part in the automatic P2P
+// mesh. A node with no policy group of its own is always allowed, so P2P keeps
+// working exactly as before for anyone who has not used policy groups.
+func (h *MeshHub) p2pAllowed(nodeID string) bool {
+	policies, peers, deviceID := h.nodePolicyDevice(nodeID)
+	return policies.AllowP2PMeshForNode(peers, deviceID)
+}
+
+// trpAllowed reports whether a mesh node may terminate TRP reverse proxies.
+func (h *MeshHub) trpAllowed(nodeID string) bool {
+	policies, peers, deviceID := h.nodePolicyDevice(nodeID)
+	return policies.AllowTRPForNode(peers, deviceID)
 }
 
 // Close shuts the mesh control plane down and releases its sockets, so a hub

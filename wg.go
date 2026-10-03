@@ -20,9 +20,14 @@ type WgServer struct {
 	privKey string
 	pubKey  string
 	store   *PeerStore
+	// policyFilter is the enforcing TUN wrapper, or nil when no policy store
+	// was supplied. It is kept so the dashboard can read the drop counters.
+	policyFilter *policyTun
 }
 
-func NewWgServer(cfg *Config, store *PeerStore) (*WgServer, error) {
+// NewWgServer creates the tunnel and applies policy-group filtering to it.
+// policies may be nil, in which case the TUN is left completely untouched.
+func NewWgServer(cfg *Config, store *PeerStore, policies *PolicyStore) (*WgServer, error) {
 	runCmd("ip", "link", "del", cfg.InterfaceName)
 
 	tunDevice, err := tun.CreateTUN(cfg.InterfaceName, cfg.MTU)
@@ -35,10 +40,28 @@ func NewWgServer(cfg *Config, store *PeerStore) (*WgServer, error) {
 
 	logger := device.NewLogger(cfg.LogLevel, "tanguard: ")
 	bind := conn.NewDefaultBind()
-	dev := device.NewDevice(tunDevice, bind, logger)
+
+	// Filtering happens on the TUN wrapper rather than on the device config, so
+	// peers are configured exactly as they always were.
+	filtered := newPolicyTun(tunDevice, policies, store, cfg)
+	dev := device.NewDevice(filtered, bind, logger)
 	log.Printf("[wg] device created, listen port %d", cfg.ListenPort)
 
-	return &WgServer{dev: dev, logger: logger, cfg: cfg, store: store}, nil
+	s := &WgServer{dev: dev, logger: logger, cfg: cfg, store: store}
+	if pf, ok := filtered.(*policyTun); ok {
+		s.policyFilter = pf
+		log.Printf("[wg] policy group filtering enabled (policy groups with rules set will be enforced)")
+	}
+	return s, nil
+}
+
+// PolicyDrops reports how many packets policy groups have silently discarded,
+// split by rule. Zero values mean no policy is restricting traffic.
+func (s *WgServer) PolicyDrops() (interDevice, internetAccess uint64) {
+	if s == nil {
+		return 0, 0
+	}
+	return s.policyFilter.Stats()
 }
 
 func (s *WgServer) Configure(privateKeyHex string, listenPort int) error {
@@ -105,7 +128,14 @@ type DeviceStatus struct {
 	Peers           []PeerStatus `json:"peers"`
 }
 
+// GetStatus reports the WireGuard device state. A mesh-only process has no
+// WgServer, so it reports an empty device rather than panicking: the dashboard
+// polls /api/status on every page, and in that mode it should render "no
+// WireGuard device" instead of tearing down the request.
 func (s *WgServer) GetStatus() (*DeviceStatus, error) {
+	if s == nil || s.dev == nil {
+		return &DeviceStatus{Peers: []PeerStatus{}}, nil
+	}
 	raw, err := s.dev.IpcGet()
 	if err != nil {
 		return nil, fmt.Errorf("ipc get: %w", err)
@@ -115,7 +145,13 @@ func (s *WgServer) GetStatus() (*DeviceStatus, error) {
 	return status, nil
 }
 
+// PublicKey is the server's WireGuard public key. A mesh-only process has no
+// WgServer at all, so a nil receiver reports an empty key instead of panicking
+// in whichever handler happened to render it.
 func (s *WgServer) PublicKey() string {
+	if s == nil {
+		return ""
+	}
 	return s.pubKey
 }
 

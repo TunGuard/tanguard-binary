@@ -18,17 +18,26 @@ import (
 )
 
 type API struct {
-	wg      *WgServer
-	store   *PeerStore
-	cfg     *Config
-	creds   *CredentialStore
-	apiKey  *APIKeyStore
-	monitor *PeerMonitor
-	ipMu    sync.Mutex
+	wg       *WgServer
+	store    *PeerStore
+	cfg      *Config
+	creds    *CredentialStore
+	apiKey   *APIKeyStore
+	monitor  *PeerMonitor
+	policies *PolicyStore
+	ipMu     sync.Mutex
 }
 
 func NewAPI(wg *WgServer, store *PeerStore, cfg *Config, creds *CredentialStore, apiKeys *APIKeyStore, monitor *PeerMonitor) *API {
-	return &API{wg: wg, store: store, cfg: cfg, creds: creds, apiKey: apiKeys, monitor: monitor}
+	return &API{
+		wg:       wg,
+		store:    store,
+		cfg:      cfg,
+		creds:    creds,
+		apiKey:   apiKeys,
+		monitor:  monitor,
+		policies: NewPolicyStore(cfg.DataDir),
+	}
 }
 
 func (a *API) Start() {
@@ -73,6 +82,7 @@ func (a *API) Start() {
 		mux.Handle("/api/peer-monitor/state", a.requireAPI(a.monitor.HandleState))
 	}
 	registerMeshRoutes(mux, a)
+	registerPolicyRoutes(mux, a)
 
 	handler := corsMiddleware(logMiddleware(mux))
 

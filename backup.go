@@ -25,6 +25,9 @@ type stateFile struct {
 func (a *API) backupStateFiles() []stateFile {
 	return []stateFile{
 		{name: "peers.json", path: filepath.Join(a.cfg.DataDir, "peers.json"), perm: 0600, required: true},
+		// Optional: a server that has never had a policy group has no file, and
+		// that must stay a valid backup rather than an error.
+		{name: "policy_groups.json", path: filepath.Join(a.cfg.DataDir, "policy_groups.json"), perm: 0600},
 		{name: "server_private.key", path: filepath.Join(a.cfg.DataDir, "server_private.key"), perm: 0600, required: true},
 		{name: "web_credentials.json", path: filepath.Join(a.cfg.DataDir, "web_credentials.json"), perm: 0600},
 		{name: "ssh_host_key", path: filepath.Join(a.cfg.DataDir, "ssh_host_key"), perm: 0600},
@@ -142,6 +145,23 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var restoredPolicy PolicyFile
+	if data, ok := readBackupFile(tmpDir, "policy_groups.json"); ok {
+		if err := json.Unmarshal(data, &restoredPolicy); err != nil {
+			jsonErr(w, 400, "backup contains an invalid policy_groups.json: "+err.Error())
+			return
+		}
+		// Run the same validation an apply does, so a restore cannot install a
+		// policy that declares the default group, duplicates an id or name, or
+		// assigns a peer that is not in the archive. Doing it against the real
+		// peer list matters: policy_groups.json carries no membership of its own
+		// that can be checked in isolation.
+		if _, err := restoredPolicy.validateAgainst(nil); err != nil {
+			jsonErr(w, 400, "backup contains an invalid policy_groups.json: "+err.Error())
+			return
+		}
+	}
+
 	var restoredKey string
 	if data, ok := readBackupFile(tmpDir, "server_private.key"); ok {
 		restoredKey = strings.TrimSpace(string(data))
@@ -192,17 +212,28 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.Load(); err != nil {
 		log.Printf("[backup] WARNING: reload peers after restore: %v", err)
 	}
-	if restoredKey != "" {
-		if err := a.wg.Configure(restoredKey, a.cfg.ListenPort); err != nil {
-			jsonErr(w, 500, "apply restored server key: "+err.Error())
-			return
-		}
-		if err := writeFile(filepath.Join(a.cfg.DataDir, "server_wg_pubkey.txt"), []byte(a.wg.PublicKey()), 0644); err != nil {
-			log.Printf("[backup] WARNING: could not refresh public key file: %v", err)
-		}
+	// Reload the policy layer too, otherwise the restored groups would only take
+	// effect after a restart while the archive's peers.json is already live.
+	if err := a.policies.Load(); err != nil {
+		log.Printf("[backup] WARNING: reload policy groups after restore: %v", err)
 	}
-	if err := a.wg.ApplyAllPeers(); err != nil {
-		log.Printf("[backup] WARNING: re-apply peers after restore: %v", err)
+	// A mesh-only server has no WireGuard server object, so there is nothing to
+	// reconfigure. Guarding here matters: an archive taken from a full server
+	// carries a server_private.key, and restoring it into a mesh-only process
+	// used to panic instead of restoring the rest of the state.
+	if a.wg != nil {
+		if restoredKey != "" {
+			if err := a.wg.Configure(restoredKey, a.cfg.ListenPort); err != nil {
+				jsonErr(w, 500, "apply restored server key: "+err.Error())
+				return
+			}
+			if err := writeFile(filepath.Join(a.cfg.DataDir, "server_wg_pubkey.txt"), []byte(a.wg.PublicKey()), 0644); err != nil {
+				log.Printf("[backup] WARNING: could not refresh public key file: %v", err)
+			}
+		}
+		if err := a.wg.ApplyAllPeers(); err != nil {
+			log.Printf("[backup] WARNING: re-apply peers after restore: %v", err)
+		}
 	}
 	if err := a.creds.Load(); err != nil {
 		log.Printf("[backup] WARNING: reload credentials after restore: %v", err)
