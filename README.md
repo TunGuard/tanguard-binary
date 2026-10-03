@@ -423,7 +423,8 @@ curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/add \
 curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/add \
   -d '{"name":"edge-a","psk":"shared-group-key"}'
 
-# Remove a node, or reset it (clears its link state, keeps the record)
+# Remove a node, or reset it (clears its link state, keeps the record).
+# Removing a node also releases every TRP mapping that targeted it.
 curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/remove \
   -d '{"id":"NODE_ID"}'
 curl -X POST -H "$H" -H "$JSON" $API/api/mesh/node/reset \
@@ -530,8 +531,10 @@ curl -sS -X POST -H "X-API-Key: $API_KEY" \
   -d "{\"id\":\"$NODE_ID\"}"
 ```
 
-Note: removing a node does not delete its TRP proxies automatically — remove
-those first with `/api/trp/proxy/remove`, or they keep holding their listeners.
+Note: removing a node releases every TRP mapping that pointed at it and frees
+the ports they were holding. A mapping whose target node no longer exists could
+never forward again, so it is removed with the node rather than left holding a
+port.
 
 ## Policy Groups API (curl)
 

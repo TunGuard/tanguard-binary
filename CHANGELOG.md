@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not validated on load, and building the response sliced the first 8 bytes of
   the public key; a shorter key crashed the handler. It now uses the existing
   length-safe `shortKey` helper.
+- **Deleting a device in P2P left its TRP ports bound.** Removing a node did not
+  touch the reverse-proxy table, so every port that device had mapped stayed in
+  `LISTEN`. The mapping had become useless — its target node was gone — but
+  nothing in the UI could release it, and the port could not be re-mapped.
+  Removing a node now releases its mappings and frees the ports, and the release
+  is persisted so the mappings do not come back on restart. Previously this
+  behaviour was documented as intentional.
 
 ## [2.3.2] - 2026-09-29
 
