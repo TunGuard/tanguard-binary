@@ -5,6 +5,51 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-10-04
+
+### Added
+
+- **Links are now tested, not just punched.** A completed hole punch only means
+  one packet arrived once, so `direct` stayed set on links that had since broken:
+  a peer that changed network, was remapped, or began dropping what it received
+  kept looking healthy on the dashboard. Each client now sends a small packet to
+  its peer every few seconds and times the echo, so a link reports the round trip
+  it actually measures and shows **no answer** when the peer stops replying. The
+  result rides in bits that older servers ignore and older clients leave unset,
+  so both directions of the upgrade work without a flag day.
+
+### Fixed
+
+- **Devices in the default group could reach devices in a private group.** The
+  inter-device rule tested the two groups' switches independently, so a device
+  that nobody had moved — which puts it in the permissive default group — could
+  reach into a restricted group whenever both switches were on. A group is a
+  boundary, not a set of extra permissions: device-to-device traffic now requires
+  both devices to resolve to the *same* group and that group to allow
+  inter-device traffic. The default group reaches only the default group, and a
+  private group only itself, in either direction and with no combination of
+  switches able to undo it.
+
+  Membership alone decides, so moving a device takes effect immediately with no
+  restart, exactly as before.
+- **The automatic P2P mesh ignored the group boundary.** A direct link is built
+  between the two clients and never passes through the server, so the packet
+  filter never saw that traffic: two devices in different policy groups could
+  still find each other through the relay even though their relayed traffic was
+  dropped. The relay no longer offers a cross-group peer's endpoint, the periodic
+  punch sweep skips the pair, and a manual connect is refused with an
+  explanation rather than silently building a link the filter would deny. A
+  device the hub cannot identify keeps the permissive answer, so a deployment
+  that has not used policy groups is unaffected.
+
+### Changed
+
+- **The first login is a page, not a popup.** A server still on the shipped
+  `admin` / `tanguard` login redirects to `login.html` instead of covering
+  whichever page was asked for with a modal. It carries the same form as the
+  Settings change-password card, and states the running version and its creator
+  in the footer.
+
 ## [2.4.1] - 2026-10-04
 
 ### Fixed

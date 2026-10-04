@@ -171,7 +171,7 @@ The status page refreshes every 10 seconds. You'll see transfer stats, last hand
 
 ### Changing the dashboard login
 
-When you log in with the default `admin` / `tanguard` credentials for the first time, you are taken straight to a screen that requires you to set a new username and password before you can use the dashboard.
+When you log in with the default `admin` / `tanguard` credentials for the first time, the server sends you to its own setup page (`login.html`) instead of the dashboard. That page carries the same form as **Settings → Dashboard Login**, and states the version you are running, until you set a new username and password. Nothing else in the dashboard is reachable until you do.
 
 You can change the dashboard login again at any time under **Settings → Dashboard Login**. The new credentials are saved (hashed) in `web_credentials.json` inside your `DATA_DIR` and take effect immediately.
 
@@ -192,10 +192,17 @@ A group has four switches, and a device is in exactly one group:
 
 | Switch | When off, the group's devices… |
 |---|---|
-| **Allow devices in this group to talk to each other** | cannot reach any other peer on the tunnel, in either direction |
+| **Allow devices in this group to talk to each other** | cannot reach each other on the tunnel, in either direction |
 | **Allow P2P automatic mesh features** | are not punched together and are not offered each other's endpoints |
 | **Allow TRP proxy port mapping features** | cannot be the target of a port mapping on this server |
 | **Allow standard WireGuard internet access** | cannot reach anything outside the tunnel |
+
+**Groups are isolated from each other.** Device-to-device traffic never crosses a
+group boundary: the switch above only opens traffic between two devices of the
+*same* group, so devices in the default group reach only other default-group
+devices, and a private group is reachable only from inside itself. A direct P2P
+link is refused for the same reason, because it never passes through the server
+and so cannot be filtered on the way through.
 
 **Nothing about a connection changes.** Devices keep the same WireGuard config,
 stay authenticated, and see no error — a blocked packet is silently discarded,
@@ -370,6 +377,37 @@ curl -X POST http://localhost:9000/api/peer/remove \
   -d '{"public_key":"PEER_PUBKEY_HEX"}'
 ```
 
+Host facts, version and self-update:
+
+```bash
+# CPU, memory, disk and network counters
+curl -H "X-API-Key: $API_KEY" http://localhost:9000/api/system
+
+# The version this server is running, plus the latest published release.
+# Add ?refresh=1 to query GitHub now instead of using the hourly cache.
+curl -H "X-API-Key: $API_KEY" http://localhost:9000/api/version
+curl -H "X-API-Key: $API_KEY" "http://localhost:9000/api/version?refresh=1"
+
+# Download and install the release for this server's architecture
+curl -X POST -H "X-API-Key: $API_KEY" http://localhost:9000/api/update
+```
+
+Backups over the API, for automation that never opens the dashboard:
+
+```bash
+# The same .tar.gz the Settings page downloads
+curl -H "X-API-Key: $API_KEY" -o backup.tar.gz \
+  http://localhost:9000/api/backup/download
+
+# Restore one: multipart upload under the field name "backup"
+curl -X POST -H "X-API-Key: $API_KEY" -F backup=@backup.tar.gz \
+  http://localhost:9000/api/backup/restore
+```
+
+Three endpoints take the **dashboard login only** and reject an API key, because
+they hand out or replace the credentials themselves: `/api/key` (read the current
+key), `/api/key/regenerate`, and `/api/web/credentials` (change the login).
+
 `/api/health` stays open for uptime checks and exposes no sensitive data.
 
 See `INTEGRATION.md` for the WebSocket SSH protocol and PHP integration.
@@ -412,7 +450,9 @@ curl -H "$H" "$API/api/mesh/nodes?show_psk=1"
 # Devices bucketed by shared PSK, with per-group link counts
 curl -H "$H" $API/api/mesh/groups
 
-# Current direct and relayed links between nodes
+# Current direct and relayed links between nodes. Each link also carries the
+# client's own link test: "tested" true and "rtt_ms" is the round trip each
+# device measured to its peer. "direct" on its own only means a punch landed.
 curl -H "$H" $API/api/mesh/links
 
 # Add a node. Omit "psk" to have one generated.
@@ -437,6 +477,12 @@ Nodes in the same group are punched to each other automatically. These calls
 force a re-punch, drop a group back to relayed, or take a node off the mesh
 entirely. `p2p/connect` needs both nodes online — an offline or unknown id
 returns `400 node offline`.
+
+A direct path never passes through the server, so it cannot be filtered on the
+way through. Two nodes whose devices are in **different policy groups** are
+therefore never punched together, and `p2p/connect` refuses the pair with
+`400 policy groups are isolated` — the same boundary the packet filter applies
+to their relayed traffic. Put both devices in one group to link them.
 
 ```bash
 # Force an immediate direct path between two nodes
@@ -572,7 +618,8 @@ curl -H "$H" $API/api/policy/groups
 ```
 
 Creating a group: every omitted switch is **off**, so this group can talk to the
-internet but nothing else:
+internet but nothing else. `allow_inter_device` opens traffic between devices of
+**this group only** — it never reaches into or out of another group:
 
 ```bash
 curl -X POST -H "$H" -H "$JSON" $API/api/policy/group/create \

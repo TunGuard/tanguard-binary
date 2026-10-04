@@ -373,6 +373,7 @@ img { max-width: 100%; display: block; }
   word-break: break-all;
 }
 .stat-value.compact { font-size: 15px; }
+.stat-sub { font-size: 12px; color: var(--on-surface-low); margin-top: 3px; }
 .stat-trend { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; }
 .stat-trend.up   { color: var(--green); }
 .stat-trend.down { color: var(--red);   }
@@ -504,6 +505,7 @@ tbody td { padding: 12px 16px; color: var(--on-surface); vertical-align: middle;
 .chip.active   { background: #E6F4EA; color: #137333; }   .chip.active .chip-dot   { background: var(--green); }
 .chip.inactive { background: var(--surface-3); color: var(--on-surface-med); } .chip.inactive .chip-dot { background: var(--on-surface-low); }
 .chip.info     { background: var(--blue-50); color: var(--blue-600); } .chip.info .chip-dot { background: var(--blue-500); }
+.chip.warn     { background: #FEF7E0; color: #B06000; }            .chip.warn .chip-dot { background: var(--yellow); }
 .chip.expired  { background: #FCE8E6; color: #C5221F; }   .chip.expired .chip-dot  { background: var(--red); }
 
 /* ─── Forms ─────────────────────────────────────────────────────────── */
@@ -669,38 +671,80 @@ textarea.form-control { font-family: var(--mono); font-size: 12px; resize: verti
 .empty-state h3 { font-family: 'Google Sans', sans-serif; font-size: 16px; color: var(--on-surface); margin-bottom: 6px; }
 .empty-state p  { font-size: 13px; color: var(--on-surface-med); max-width: 300px; }
 
-/* ─── Login / forced credential change ──────────────────────────────── */
-#change-creds-screen {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: none;
+/* ─── First login (standalone setup page) ───────────────────────────── */
+body[data-page="login"] {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #E8F0FE 0%, #F8F9FA 50%, #E8F5E9 100%);
+  background-attachment: fixed;
+}
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: linear-gradient(135deg, #E8F0FE 0%, #F8F9FA 50%, #E8F5E9 100%);
+  gap: 20px;
+  padding: 40px 20px;
 }
-#change-creds-screen.open { display: flex; }
-.login-card {
-  background: var(--surface);
-  border-radius: var(--radius-xl);
-  padding: 40px;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: var(--shadow-4);
-}
-.login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; justify-content: center; }
+.login-brand { text-align: center; }
+.login-logo { display: inline-flex; align-items: center; gap: 12px; }
 .login-logo-icon {
   width: 48px; height: 48px;
   background: var(--blue-500);
   border-radius: var(--radius-md);
   display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-2);
 }
 .login-logo-icon svg { width: 28px; height: 28px; fill: white; }
-.login-logo-text { font-family: 'Google Sans Display', sans-serif; font-size: 22px; font-weight: 700; color: var(--blue-500); }
-.login-title { font-family: 'Google Sans', sans-serif; font-size: 20px; font-weight: 500; text-align: center; margin-bottom: 6px; }
-.login-sub { font-size: 13px; color: var(--on-surface-med); text-align: center; margin-bottom: 28px; }
-.login-card .btn-block { width: 100%; justify-content: center; margin-top: 4px; }
+.login-logo-text { font-family: 'Google Sans Display', sans-serif; font-size: 24px; font-weight: 700; color: var(--blue-500); }
+.login-tagline { margin-top: 6px; font-size: 13px; color: var(--on-surface-med); }
+.login-panel { width: 100%; max-width: 720px; margin-bottom: 0; box-shadow: var(--shadow-4); }
+.login-panel .alert { margin-bottom: 20px; }
+.login-panel code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: rgba(255,255,255,.7);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+/* Creator credit + the version this server is running. */
+.login-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 24px;
+  font-size: 12px;
+  color: var(--on-surface-med);
+}
+.login-meta { display: inline-flex; align-items: center; gap: 6px; }
+.login-meta-icon { width: 15px; height: 15px; fill: var(--on-surface-low); flex: none; }
+.login-meta a { color: var(--blue-500); font-weight: 500; }
+.login-meta a:hover { text-decoration: underline; }
+.login-version {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--on-surface);
+  background: var(--surface);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-full);
+  padding: 2px 9px;
+}
+.login-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: #E6F4EA;
+  color: #137333;
+  font-size: 11px;
+  font-weight: 600;
+}
+.login-update svg { width: 13px; height: 13px; fill: currentColor; flex: none; }
+.login-latest { font-family: var(--mono); }
 
 /* ─── Config display ────────────────────────────────────────────────── */
 .config-display { display: flex; gap: 24px; flex-wrap: wrap; }

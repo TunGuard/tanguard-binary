@@ -123,6 +123,7 @@
           <span class="stat-icon green"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
         </div>
         <div class="stat-value" id="stat-direct">—</div>
+        <div class="stat-sub" id="stat-tested-sub">link test: —</div>
       </div>
       <div class="stat-card">
         <div class="stat-card-header">
@@ -139,7 +140,7 @@
       <div class="card-header">
         <div>
           <div class="card-title">Links</div>
-          <div class="card-subtitle">Live punch state as reported by each device. <em>Direct</em> means the two devices reached each other without relaying.</div>
+          <div class="card-subtitle">Live punch state as reported by each device. <em>Direct</em> means the two devices reached each other without relaying. <em>Link test</em> is each device's own round trip to its peer: a small packet it sent that the far end echoed back, timed end to end.</div>
         </div>
       </div>
       <div class="table-wrapper">
@@ -150,6 +151,7 @@
               <th>To</th>
               <th>Peer endpoint</th>
               <th>State</th>
+              <th>Link test</th>
               <th>Direct since</th>
               <th></th>
             </tr>

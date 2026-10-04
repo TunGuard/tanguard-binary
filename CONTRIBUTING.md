@@ -18,18 +18,30 @@ sudo ./tanguard -web
 
 ## Project Structure
 
-| Path            | Description                        |
-|-----------------|------------------------------------|
-| `main.go`       | Entry point, CLI flags, orchestration |
-| `config.go`     | Configuration from environment vars |
-| `wg.go`         | WireGuard device management         |
-| `api.go`        | HTTP API and web dashboard          |
-| `webui.go`      | Web UI handler with embedded HTML   |
-| `ssh.go`        | SSH gateway for peer access         |
-| `crypto.go`     | Key generation utilities            |
-| `nat.go`        | NAT/iptables setup and teardown     |
-| `peer_store.go` | Peer persistence                    |
-| `fileutil.go`   | File I/O helpers                    |
+Source is grouped into packages by what they own. `main.go` only parses flags
+and wires the pieces together; everything it starts lives in one of these:
+
+| Path                | Description                                |
+|---------------------|--------------------------------------------|
+| `main.go`           | Entry point, CLI flags, orchestration       |
+| `config/`           | Configuration from environment vars, key generation, file I/O helpers, build version |
+| `auth/`             | Dashboard credentials and the API key store |
+| `peers/`            | Peer persistence                           |
+| `policy/`           | Policy groups, the packet filter, group enforcement |
+| `wg/`               | WireGuard device management, NAT/iptables setup, peer monitor, system stats |
+| `p2p/`              | Tun control plane, node control, P2P relay  |
+| `trp/`              | TRP reverse-proxy bindings                  |
+| `api/`              | HTTP API, web dashboard handlers, backup/restore, SSH gateway |
+| `webui/`            | Dashboard HTML/JS/CSS and the handler that serves them |
+| `internal/testenv/` | Test-only helpers shared across packages   |
+
+Tests live next to the code they cover (`p2p/mesh_test.go` and so on), except
+for the end-to-end tests that need the real client binary: those live in the
+package whose behaviour they prove end to end.
+
+Package dependencies run one way: `main` → `api` → `wg`/`p2p`/`trp`/`policy` →
+`peers`/`auth`/`config`. `p2p` reaches TRP through a small interface so the two
+do not depend on each other.
 
 ## Making Changes
 

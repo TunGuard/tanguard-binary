@@ -52,10 +52,12 @@ function setText(id, v) {
 function renderStats() {
   // meshStatus() has no link totals, and the links array is the live truth.
   const direct = p2pLinks.filter(l => l.direct).length;
+  const tested = p2pLinks.filter(l => l.tested).length;
 
   setText('stat-devices', p2pStatus.nodes != null ? p2pStatus.nodes : 0);
   setText('stat-groups', p2pGroups.length);
   setText('stat-direct', direct);
+  setText('stat-tested-sub', tested + ' of ' + direct + ' answer a link test');
   setText('p2p-online', p2pStatus.online != null ? p2pStatus.online : 0);
 
   const ctrl = p2pStatus.control_listen || '—';
@@ -99,13 +101,14 @@ function renderGroups() {
         : '<span class="td-sub">no hub endpoint</span>';
       const peers = m.peers || 0;
       const directPeers = m.direct_peers || 0;
+      const testedPeers = m.tested_peers || 0;
       return `<tr>
         <td><span class="td-label">${escapeHtml(m.name || m.id)}</span>
             <div class="td-sub mono">${escapeHtml(m.id)}</div></td>
         <td>${chip}</td>
         <td class="mono">${escapeHtml(m.control_ip || '—')}</td>
         <td>${ep}</td>
-        <td class="mono">${directPeers} / ${peers} direct</td>
+        <td class="mono"${testedPeers < directPeers ? ' title="' + directPeers + ' direct, ' + testedPeers + ' answering a test"' : ''}>${directPeers} / ${peers} direct</td>
         <td class="td-sub">${fmtAgo(m.last_seen)}</td>
         <td><button class="btn btn-sm btn-danger" onclick="removeNode('${escapeHtml(m.id)}')">Remove</button></td>
       </tr>`;
@@ -145,7 +148,7 @@ function renderLinks() {
   if (!tbody) return;
 
   if (!p2pLinks.length) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
       <div class="empty-state-icon"><svg viewBox="0 0 24 24"><path d="M7.5 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zm9 0a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM4 22h16v-2H4v2z"/></svg></div>
       <h3>No peer links</h3>
       <p>When two devices in the same group are online they link up on their own. Nothing to do here yet.</p>
@@ -164,10 +167,27 @@ function renderLinks() {
           <div class="td-sub mono">${escapeHtml(l.to)}</div></td>
       <td class="mono">${escapeHtml(l.endpoint || '—')}</td>
       <td>${state}</td>
+      <td>${linkTestCell(l)}</td>
       <td class="td-sub">${l.direct_since ? fmtAgo(l.direct_since) : '—'}</td>
       <td><button class="btn btn-sm btn-secondary" onclick="rePunchPair('${escapeHtml(l.from)}','${escapeHtml(l.to)}')">Re-punch</button></td>
     </tr>`;
   }).join('');
+}
+
+// The link test is the only figure here that is a measurement rather than a
+// state, so it gets its own cell and says plainly what it does not know: a
+// direct link whose test has no answer is a link that punched and then went
+// quiet, which is exactly the case a bare "direct" badge hides.
+function linkTestCell(l) {
+  if (!l.online) return '<span class="td-sub">offline</span>';
+  if (l.tested) {
+    const ms = l.rtt_ms != null ? l.rtt_ms : 0;
+    return `<span class="chip active"><span class="chip-dot"></span>${ms} ms</span>`;
+  }
+  if (l.direct) {
+    return '<span class="chip warn" data-tip="Punched, but the peer did not answer a test packet"><span class="chip-dot"></span>no answer</span>';
+  }
+  return '<span class="td-sub">not tested yet</span>';
 }
 
 // Auto-meshing is already on; re-punch is the manual retry for a stuck link.

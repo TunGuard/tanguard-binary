@@ -7,34 +7,6 @@ const NAV_ICONS = {
 };
 
 document.body.insertAdjacentHTML('beforeend', `
-<div id="change-creds-screen">
-  <div class="login-card">
-    <div class="login-logo">
-      <div class="login-logo-icon">
-        <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg>
-      </div>
-      <div class="login-logo-text">TunGuard</div>
-    </div>
-    <h2 class="login-title">Set your dashboard login</h2>
-    <p class="login-sub">For security you must change the default <code>admin</code> / <code>tanguard</code> login before using the dashboard.</p>
-    <form class="web-login-form" onsubmit="changeCredentials(event)">
-      <div class="form-group">
-        <label class="form-label">Username</label>
-        <input class="form-control" name="username" placeholder="New username" required autocomplete="off">
-      </div>
-      <div class="form-group">
-        <label class="form-label">New password (min 8 chars)</label>
-        <input class="form-control" name="password" type="password" placeholder="New password" required autocomplete="new-password">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Confirm password</label>
-        <input class="form-control" name="confirm_password" type="password" placeholder="Confirm password" required autocomplete="new-password">
-      </div>
-      <button type="submit" class="btn btn-primary btn-block">Save &amp; Log In</button>
-    </form>
-  </div>
-</div>
-
 <div id="toast-container" class="toast-container"></div>
 `);
 
@@ -192,7 +164,6 @@ async function changeCredentials(e) {
   });
   btn.disabled = false;
   if (r && r.success) {
-    document.getElementById('change-creds-screen').classList.remove('open');
     f.reset();
     showToast('Credentials updated. Log in again with the new credentials.', 'success');
     setTimeout(() => location.reload(), 1500);
@@ -201,10 +172,14 @@ async function changeCredentials(e) {
   }
 }
 
+// A server still on the shipped login has no usable dashboard, so the setup
+// form is a page of its own rather than a popup over the page the user asked
+// for. login.html sends them on once the login has been changed.
 async function checkAuthStatus() {
+  if (CURRENT_PAGE === 'login') return;
   const r = await fetchAPI('/api/auth/status');
   if (r && r.must_change) {
-    document.getElementById('change-creds-screen').classList.add('open');
+    location.replace('login.html');
   }
 }
 
@@ -250,4 +225,4 @@ async function regenerateAPIKey() {
 checkAuthStatus();
 loadSidebarStatus();
 loadAPIKey();
-if (CURRENT_PAGE !== 'dashboard') setInterval(loadSidebarStatus, 10000);
+if (CURRENT_PAGE !== 'dashboard' && CURRENT_PAGE !== 'login') setInterval(loadSidebarStatus, 10000);

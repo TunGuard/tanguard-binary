@@ -7,16 +7,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-)
 
-// version is overridable at build time with
-//
-//	-ldflags "-X main.version=$(git describe --tags --always)"
-//
-// so a tagged release reports its own version. Hardcoding it here meant every
-// release claimed to be the same build, and the dashboard offered an update
-// that could never be installed.
-var version = "2.3.0-dev"
+	"tanguard/api"
+	"tanguard/auth"
+	"tanguard/config"
+	"tanguard/p2p"
+	"tanguard/peers"
+	"tanguard/policy"
+	"tanguard/trp"
+	"tanguard/wg"
+)
 
 func printUsage() {
 	fmt.Println("TunGuard - userspace WireGuard engine")
@@ -48,50 +48,115 @@ func printUsage() {
 	os.Exit(0)
 }
 
-// runMeshOnly serves the tun control plane and the dashboard without touching
-// WireGuard. It is the mode used to test and operate P2P and TRP on a host
-// that has no tun device, or no privileges to create one.
-func runMeshOnly(cfg *Config) {
-	log.Printf("[main] mesh-only mode: WireGuard disabled, control plane only")
-	creds := NewCredentialStore(cfg.DataDir)
+// loadStores reads the on-disk state the mesh-only mode needs. A missing file is
+// normal on a fresh install and only warns.
+func loadStores(cfg *config.Config) (*auth.CredentialStore, *auth.APIKeyStore, *peers.PeerStore) {
+	return loadCredentials(cfg), loadAPIKeys(cfg), loadPeerStore(cfg)
+}
+
+// loadCredentials reads the dashboard login. A missing file is normal on a
+// fresh install: the defaults apply until the operator logs in once.
+func loadCredentials(cfg *config.Config) *auth.CredentialStore {
+	creds := auth.NewCredentialStore(cfg.DataDir)
 	if err := creds.Load(); err != nil {
 		log.Printf("[main] WARNING: could not load web credentials: %v", err)
 	}
-	apiKeys := NewAPIKeyStore(cfg.DataDir)
+	return creds
+}
+
+// loadAPIKeys reads the single API key automation authenticates with.
+func loadAPIKeys(cfg *config.Config) *auth.APIKeyStore {
+	apiKeys := auth.NewAPIKeyStore(cfg.DataDir)
 	if err := apiKeys.Load(); err != nil {
 		log.Printf("[main] WARNING: could not load API key: %v", err)
 	}
+	return apiKeys
+}
 
-	hub := StartMesh(cfg)
-	if hub == nil {
-		log.Fatalf("[main] mesh control plane failed to start (is MESH_ENABLED=false?)")
-	}
-	log.Printf("[main] tun control plane ready: control=%s relay=%s",
-		hub.cfg.ControlListen, hub.cfg.RelayListen)
-
-	// P2P and TRP are still policy-filtered here, so the mesh behaves the same
-	// way whether or not WireGuard is running on this host.
-	peers := NewPeerStore(cfg.DataDir)
-	if err := peers.Load(); err != nil {
+// loadPeerStore reads the WireGuard peer list.
+func loadPeerStore(cfg *config.Config) *peers.PeerStore {
+	store := peers.NewPeerStore(cfg.DataDir)
+	if err := store.Load(); err != nil {
 		log.Printf("[main] WARNING: could not load peers: %v", err)
 	}
-	policies := NewPolicyStore(cfg.DataDir)
+	return store
+}
+
+// loadPolicies loads the policy groups. They are a pure administrative filter,
+// so they are read before anything is served and the filter is therefore active
+// for the very first packet. A missing file is normal and yields the permissive
+// default group.
+func loadPolicies(cfg *config.Config) *policy.PolicyStore {
+	policies := policy.NewPolicyStore(cfg.DataDir)
 	if err := policies.Load(); err != nil {
 		log.Printf("[main] WARNING: could not load policy groups: %v", err)
 	}
-	hub.SetPolicy(policies, peers)
+	for _, g := range policies.List() {
+		if !g.Builtin {
+			log.Printf("[main] policy group %q restored: inter_device=%v p2p=%v trp=%v wg_access=%v (%d devices)",
+				g.Name, g.AllowInterDevice, g.AllowP2PMesh, g.AllowTRP, g.AllowWGAccess, len(policies.Members(g.ID)))
+		}
+	}
+	return policies
+}
 
-	// The API is started with no WireGuard server: the mesh handlers only read
-	// the hub, but the routes they share are the normal ones so the dashboard
-	// behaves exactly as it does in a full deployment.
-	api := NewAPI(nil, peers, cfg, creds, apiKeys, nil)
-	api.policies = policies
-	go api.Start()
+// startMesh boots the tun control plane (node control + P2P relay) and its TRP
+// reverse-proxy manager, and reports whether the control plane came up at all.
+// The TRP manager is created here rather than inside the hub because the two
+// depend on each other: the manager drives nodes through the hub, and the hub
+// has to release a node's mappings when the node is removed.
+func startMesh(cfg *config.Config, policies *policy.PolicyStore, store *peers.PeerStore) (*p2p.MeshHub, *trp.TRPManager) {
+	hub := p2p.StartMesh(cfg)
+	if hub == nil {
+		return nil, nil
+	}
+	log.Printf("[main] tun control plane ready: control=%s relay=%s", hub.ControlAddr(), hub.RelayAddr())
+
+	// Policy groups gate the mesh features as well as the tunnel, so the hub
+	// needs the same two stores the filter uses.
+	hub.SetPolicy(policies, store)
+
+	trpMgr := trp.NewTRPManager(hub, hub.ProxiesPath())
+	hub.SetProxyReleaser(trpMgr)
+	if err := trpMgr.Restore(); err != nil {
+		log.Printf("[main] WARNING: could not restore reverse proxies: %v", err)
+	}
+	return hub, trpMgr
+}
+
+// logDashboard reports where the dashboard is and which login to use.
+func logDashboard(cfg *config.Config, creds *auth.CredentialStore) {
 	user := cfg.WebUsername
 	if u, ok := creds.Username(); ok {
 		user = u
 	}
 	log.Printf("[main] web dashboard at http://localhost%s  user=%s", cfg.APIListen, user)
+}
+
+// runMeshOnly serves the tun control plane and the dashboard without touching
+// WireGuard. It is the mode used to test and operate P2P and TRP on a host
+// that has no tun device, or no privileges to create one.
+func runMeshOnly(cfg *config.Config) {
+	log.Printf("[main] mesh-only mode: WireGuard disabled, control plane only")
+
+	// P2P and TRP are still policy-filtered here, so the mesh behaves the same
+	// way whether or not WireGuard is running on this host.
+	creds, apiKeys, store := loadStores(cfg)
+	policies := loadPolicies(cfg)
+
+	hub, trpMgr := startMesh(cfg, policies, store)
+	if hub == nil {
+		log.Fatalf("[main] mesh control plane failed to start (is MESH_ENABLED=false?)")
+	}
+
+	// The API is started with no WireGuard server: the mesh handlers only read
+	// the hub, but the routes they share are the normal ones so the dashboard
+	// behaves exactly as it does in a full deployment.
+	apiSrv := api.NewAPI(nil, store, cfg, creds, apiKeys, nil)
+	apiSrv.SetPolicy(policies)
+	apiSrv.SetMesh(hub, trpMgr)
+	go apiSrv.Start()
+	logDashboard(cfg, creds)
 
 	// Relay and TRP run in their own goroutines, so the process just waits.
 	select {}
@@ -113,28 +178,26 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	log.Println("[main] TunGuard - userspace WireGuard server")
 
-	cfg := loadConfig()
+	cfg := config.LoadConfig()
 
-	creds := NewCredentialStore(cfg.DataDir)
 	if *resetFlag {
-		if err := creds.Load(); err != nil {
+		// The reset has to read the credentials it is about to overwrite, and a
+		// failure there is fatal rather than a warning: the operator asked for a
+		// reset and silently doing nothing would look like it worked.
+		resetCreds := auth.NewCredentialStore(cfg.DataDir)
+		if err := resetCreds.Load(); err != nil {
 			log.Fatalf("[main] could not load web credentials: %v", err)
 		}
-		if err := creds.Reset(); err != nil {
+		if err := resetCreds.Reset(); err != nil {
 			log.Fatalf("[main] could not reset web credentials: %v", err)
 		}
 		fmt.Println("Web dashboard credentials reset to default login: admin / tanguard")
 		fmt.Println("Start the server and log in again to set new credentials.")
 		os.Exit(0)
 	}
-	if err := creds.Load(); err != nil {
-		log.Printf("[main] WARNING: could not load web credentials: %v", err)
-	}
 
-	apiKeys := NewAPIKeyStore(cfg.DataDir)
-	if err := apiKeys.Load(); err != nil {
-		log.Printf("[main] WARNING: could not load API key: %v", err)
-	}
+	creds := loadCredentials(cfg)
+	apiKeys := loadAPIKeys(cfg)
 
 	if *webFlag {
 		cfg.WebEnabled = true
@@ -154,50 +217,27 @@ func main() {
 	log.Printf("[main] config: iface=%s port=%d addr=%s api=%s web=%v ssh=%v",
 		cfg.InterfaceName, cfg.ListenPort, cfg.Address, cfg.APIListen,
 		cfg.WebEnabled, cfg.SSHEnabled)
-	if cfg.WebEnabled {
-		user := cfg.WebUsername
-		if u, ok := creds.Username(); ok {
-			user = u
-		}
-		log.Printf("[main] web dashboard at http://localhost%s  user=%s", cfg.APIListen, user)
-	}
 
-	store := NewPeerStore(cfg.DataDir)
-	if err := store.Load(); err != nil {
-		log.Printf("[main] WARNING: could not load peers: %v", err)
-	}
+	store := loadPeerStore(cfg)
+	policies := loadPolicies(cfg)
 
-	// Policy groups are a pure administrative filter loaded before the tunnel
-	// comes up, so the filter is active for the very first packet. A missing
-	// file is normal and yields the permissive default group.
-	policies := NewPolicyStore(cfg.DataDir)
-	if err := policies.Load(); err != nil {
-		log.Printf("[main] WARNING: could not load policy groups: %v", err)
-	}
-	for _, g := range policies.List() {
-		if !g.Builtin {
-			log.Printf("[main] policy group %q restored: inter_device=%v p2p=%v trp=%v wg_access=%v (%d devices)",
-				g.Name, g.AllowInterDevice, g.AllowP2PMesh, g.AllowTRP, g.AllowWGAccess, len(policies.Members(g.ID)))
-		}
-	}
-
-	wg, err := NewWgServer(cfg, store, policies)
+	wgSrv, err := wg.NewWgServer(cfg, store, policies)
 	if err != nil {
 		log.Fatalf("[main] failed to create WireGuard server: %v", err)
 	}
 
-	privKey, err := wg.LoadSavedPrivateKey()
+	privKey, err := wgSrv.LoadSavedPrivateKey()
 	if err != nil {
 		log.Fatalf("[main] private key: %v", err)
 	}
 
-	if err := wg.Configure(privKey, cfg.ListenPort); err != nil {
+	if err := wgSrv.Configure(privKey, cfg.ListenPort); err != nil {
 		log.Fatalf("[main] configure device: %v", err)
 	}
 
-	log.Printf("[main] server public key: %s", wg.PublicKey())
+	log.Printf("[main] server public key: %s", wgSrv.PublicKey())
 
-	if err := wg.ApplyAllPeers(); err != nil {
+	if err := wgSrv.ApplyAllPeers(); err != nil {
 		log.Printf("[main] WARNING: failed to apply peers: %v", err)
 	}
 	for _, rec := range store.All() {
@@ -205,27 +245,27 @@ func main() {
 			rec.PublicKey[:8]+"...", rec.AllowedIP, rec.DeviceID)
 	}
 
-	setupNAT(cfg)
+	wg.SetupNAT(cfg)
 
-	monitor := NewPeerMonitor(wg)
+	monitor := wg.NewPeerMonitor(wgSrv)
 	monitor.Start()
 
-	api := NewAPI(wg, store, cfg, creds, apiKeys, monitor)
-	api.policies = policies
-	go api.Start()
+	// The tun control plane is started before the API so the dashboard handlers
+	// have their hub from the first request: TCP :7000 for node control, UDP
+	// :7001 for the P2P rendezvous/relay, plus the TRP reverse-proxy bindings.
+	hub, trpMgr := startMesh(cfg, policies, store)
 
-	// tun control plane: TCP :7000 for node control, UDP :7001 for the P2P
-	// rendezvous/relay, plus the TRP reverse-proxy bindings.
-	if hub := StartMesh(cfg); hub != nil {
-		log.Printf("[main] tun control plane ready: control=%s relay=%s",
-			hub.cfg.ControlListen, hub.cfg.RelayListen)
-		// Policy groups gate the mesh features as well as the tunnel, so the
-		// hub needs the same two stores the filter uses.
-		hub.SetPolicy(policies, store)
+	apiSrv := api.NewAPI(wgSrv, store, cfg, creds, apiKeys, monitor)
+	apiSrv.SetPolicy(policies)
+	apiSrv.SetMesh(hub, trpMgr)
+	go apiSrv.Start()
+
+	if cfg.WebEnabled {
+		logDashboard(cfg, creds)
 	}
 
 	if cfg.SSHEnabled {
-		sshGW, err := NewSSHGateway(cfg, creds)
+		sshGW, err := api.NewSSHGateway(cfg, creds)
 		if err != nil {
 			log.Printf("[main] WARNING: SSH gateway init failed: %v", err)
 		} else {
@@ -234,7 +274,7 @@ func main() {
 	}
 
 	pubKeyFile := cfg.DataDir + "/server_wg_pubkey.txt"
-	if err := writeFile(pubKeyFile, []byte(wg.PublicKey()), 0644); err != nil {
+	if err := config.WriteFile(pubKeyFile, []byte(wgSrv.PublicKey()), 0644); err != nil {
 		log.Printf("[main] WARNING: could not save public key file: %v", err)
 	} else {
 		log.Printf("[main] public key saved to %s", pubKeyFile)
@@ -242,8 +282,8 @@ func main() {
 
 	statusFile := cfg.DataDir + "/wg_status.json"
 	statusJSON := fmt.Sprintf(`{"server_public_key":"%s","listen_port":%d,"subnet":"%s","api":"%s","web_enabled":%v,"ssh_enabled":%v}`,
-		wg.PublicKey(), cfg.ListenPort, cfg.Subnet, cfg.APIListen, cfg.WebEnabled, cfg.SSHEnabled)
-	if err := writeFile(statusFile, []byte(statusJSON), 0644); err != nil {
+		wgSrv.PublicKey(), cfg.ListenPort, cfg.Subnet, cfg.APIListen, cfg.WebEnabled, cfg.SSHEnabled)
+	if err := config.WriteFile(statusFile, []byte(statusJSON), 0644); err != nil {
 		log.Printf("[main] WARNING: could not save status: %v", err)
 	}
 
@@ -254,8 +294,8 @@ func main() {
 	sig := <-sigCh
 	log.Printf("[main] received %s, shutting down...", sig)
 
-	cleanupNAT(cfg)
-	wg.Close()
+	wg.CleanupNAT(cfg)
+	wgSrv.Close()
 	store.Save()
 	policies.Save()
 	log.Println("[main] TunGuard stopped")
