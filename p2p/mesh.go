@@ -727,11 +727,20 @@ func (h *MeshHub) handleControlConn(c net.Conn) {
 		log.Printf("[mesh] psk read failed from %s: %v", remoteIP, err)
 		return
 	}
+	ls := strings.ToLower(strings.TrimRight(line, "\r\n"))
+	if strings.HasPrefix(ls, "get ") || strings.HasPrefix(ls, "post ") || strings.HasPrefix(ls, "head ") || strings.HasPrefix(ls, "put ") || strings.HasPrefix(ls, "delete ") || strings.HasPrefix(ls, "options ") || strings.HasPrefix(ls, "connect ") || strings.Contains(ls, "http/") {
+		// Looks like an HTTP request probing the control port; drop it silently
+		return
+	}
 	psk := strings.TrimRight(line, "\r\n")
 
 	deviceID := ""
 	if peeked, perr := rd.Peek(1); perr == nil && len(peeked) == 1 && peeked[0] != '\n' && peeked[0] != '\r' {
 		if dline, derr := rd.ReadString('\n'); derr == nil {
+			dls := strings.ToLower(strings.TrimRight(dline, "\r\n"))
+			if strings.HasPrefix(dls, "host:") || strings.HasPrefix(dls, "user-agent:") || strings.HasPrefix(dls, "accept") || strings.HasPrefix(dls, "connection:") || strings.HasPrefix(dls, "authorization:") || strings.HasPrefix(dls, "x-") || strings.Contains(dls, "http/") {
+				return
+			}
 			deviceID = sanitizeDeviceID(dline)
 		}
 	} else {
