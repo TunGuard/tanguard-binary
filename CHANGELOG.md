@@ -5,6 +5,30 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.4] - 2026-10-07
+
+### Changed
+
+- **The dashboard is now a WinBox-style desktop.** The whole UI was restyled
+  after MikroTik's WinBox 4: a dark theme by default with a light theme
+  beside it (toggle in the top bar), a compact sidebar and top bar, and
+  Font Awesome icons in place of the inline SVGs.
+
+### Added
+
+- **Pages open as floating windows.** On a wide screen the sidebar opens
+  each page — Dashboard, Peers, P2P, TRP, Policy, Settings — as a window on
+  the desktop: drag its title bar to move it, pull any edge or corner to
+  resize, and use the title-bar buttons to maximize, minimize or close.
+  Windows stack by focus, the sidebar highlights the focused one, and each
+  window remembers its size and position. The dashboard opens first, and
+  links inside a window (for example "Add peer") open a window rather than
+  navigating away.
+- **Narrow screens keep the old behaviour:** below 860px the pages navigate
+  normally as plain pages, and a page opened on its own still shows its own
+  sidebar and top bar. The first-login setup page from 2.4.2 is styled to
+  match.
+
 ## [2.4.2] - 2026-10-04
 
 ### Added
