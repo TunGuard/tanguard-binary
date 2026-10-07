@@ -14,6 +14,37 @@ function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('mobile-open');
 }
 
+function applyThemeLabel() {
+  const label = document.getElementById('themeLabel');
+  if (label) label.textContent = document.documentElement.classList.contains('light') ? 'Light' : 'Dark';
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.classList.contains('light') ? 'dark' : 'light';
+  html.classList.toggle('light', next === 'light');
+  try { localStorage.setItem('tg-theme', next); } catch (e) { /* private mode */ }
+  applyThemeLabel();
+}
+
+// Collapse / restore a window panel's body (WinBox minimize button).
+function toggleWinPanel(btn) {
+  const win = btn.closest('.card');
+  if (!win) return;
+  const collapsed = win.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '+' : '\u2013';
+  btn.title = collapsed ? 'Expand' : 'Collapse';
+}
+
+// Expand a window panel over the workspace (WinBox maximize button).
+function toggleWinMax(btn) {
+  const win = btn.closest('.card');
+  if (!win) return;
+  const maxed = win.classList.toggle('maximized');
+  btn.textContent = maxed ? '\u2922' : '\u25A1';
+  btn.title = maxed ? 'Restore' : 'Maximize';
+}
+
 function showToast(msg, type) {
   const t = document.createElement('div');
   t.className = 'toast';
@@ -222,6 +253,344 @@ async function regenerateAPIKey() {
   }
 }
 
+// ---- WinBox-style window manager (desktop shell only) ---------------
+// The dashboard shell (index.html, no ?embed=1) turns every page into a
+// floating, draggable, resizable window holding that page in an iframe.
+// Pages keep working standalone: ?embed=1 just strips the outer chrome.
+const WIN_DEFS = {
+  dashboard: { title: 'Dashboard',        icon: 'fa-gauge',           href: 'index.html' },
+  peers:     { title: 'Peers',            icon: 'fa-users',           href: 'peers.html' },
+  p2p:       { title: 'P2P Mesh',         icon: 'fa-diagram-project', href: 'p2p.html' },
+  trp:       { title: 'TRP Port Mapping', icon: 'fa-route',           href: 'trp.html' },
+  policy:    { title: 'Policy Groups',    icon: 'fa-shield-halved',   href: 'policy.html' },
+  settings:  { title: 'Settings',         icon: 'fa-gear',            href: 'settings.html' }
+};
+let winZ = 30;
+let winCascade = 0;
+
+function isShell() {
+  return document.documentElement.classList.contains('shell');
+}
+
+function clamp(v, lo, hi) {
+  return Math.min(Math.max(v, lo), hi);
+}
+
+function getWinRects() {
+  try { return JSON.parse(localStorage.getItem('tg-win-rects')) || {}; } catch (e) { return {}; }
+}
+function saveWinRect(key, rect) {
+  try {
+    const all = getWinRects();
+    all[key] = rect;
+    localStorage.setItem('tg-win-rects', JSON.stringify(all));
+  } catch (e) { /* private mode */ }
+}
+function currentRect(win) {
+  return { left: win.offsetLeft, top: win.offsetTop, width: win.offsetWidth, height: win.offsetHeight };
+}
+function persistWin(win) {
+  if (win.classList.contains('maximized') || win.classList.contains('minimized')) return;
+  saveWinRect(win.dataset.key, currentRect(win));
+}
+
+function embedHref(href) {
+  return href + (href.indexOf('?') >= 0 ? '&' : '?') + 'embed=1';
+}
+
+function focusWin(key) {
+  const win = document.getElementById('win-' + key);
+  if (!win) return;
+  winZ += 1;
+  win.style.zIndex = winZ;
+  document.querySelectorAll('.wb-window.focused').forEach(w => w.classList.remove('focused'));
+  win.classList.add('focused');
+  if (!isShell()) return;
+  const href = (WIN_DEFS[key] || {}).href || '';
+  document.querySelectorAll('.sidebar-nav .nav-item').forEach(a => {
+    a.classList.toggle('active', (a.getAttribute('href') || '').split(/[?#]/)[0] === href);
+  });
+  const title = document.querySelector('.topbar-title');
+  if (title && WIN_DEFS[key]) title.textContent = WIN_DEFS[key].title;
+}
+
+function openWin(key, href) {
+  const def = WIN_DEFS[key];
+  const ws = document.getElementById('workspace');
+  if (!def || !ws || !isShell()) return false;
+
+  const target = href || def.href;
+  let win = document.getElementById('win-' + key);
+  if (win) {
+    const frame = win.querySelector('iframe');
+    if (frame && frame.dataset.src !== target) {
+      frame.dataset.src = target;
+      win.querySelector('.window-body').classList.add('loading');
+      frame.src = embedHref(target);
+    }
+    if (win.classList.contains('minimized')) toggleWinMin(key);
+    focusWin(key);
+    return true;
+  }
+
+  const wsW = ws.clientWidth;
+  const wsH = ws.clientHeight;
+  if (wsW < 400 || wsH < 260) return false;
+
+  const saved = getWinRects()[key] || {};
+  const width = Math.min(saved.width || Math.min(920, wsW - 140), wsW - 16);
+  const height = Math.min(saved.height || Math.min(640, wsH - 90), wsH - 16);
+  const defLeft = 34 + (winCascade % 6) * 26;
+  const defTop = 18 + (winCascade % 6) * 22;
+  winCascade += 1;
+  const left = clamp(saved.left != null ? saved.left : defLeft, -(width - 140), Math.max(0, wsW - 140));
+  const top = clamp(saved.top != null ? saved.top : defTop, 0, Math.max(0, wsH - 26));
+
+  win = document.createElement('div');
+  win.className = 'wb-window';
+  win.id = 'win-' + key;
+  win.dataset.key = key;
+  win.style.left = left + 'px';
+  win.style.top = top + 'px';
+  win.style.width = width + 'px';
+  win.style.height = height + 'px';
+  win.style.zIndex = ++winZ;
+  win.innerHTML =
+    '<div class="window-header">' +
+      '<div class="window-title"><i class="fa-solid ' + def.icon + '"></i><span>' + def.title + '</span></div>' +
+      '<div class="window-btns">' +
+        '<button type="button" data-act="max" title="Maximize"><i class="fa-solid fa-maximize"></i></button>' +
+        '<button type="button" data-act="min" title="Minimize"><i class="fa-solid fa-minus"></i></button>' +
+        '<button type="button" data-act="close" title="Close"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="window-body loading">' +
+      '<div class="window-loader"><div class="spinner"></div></div>' +
+      '<iframe title="' + def.title + '"></iframe>' +
+    '</div>' +
+    ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map(d => '<div class="rs rs-' + d + '" data-dir="' + d + '"></div>').join('');
+  ws.appendChild(win);
+
+  const frame = win.querySelector('iframe');
+  frame.dataset.src = target;
+  frame.src = embedHref(target);
+  frame.addEventListener('load', () => win.querySelector('.window-body').classList.remove('loading'));
+  wireWin(win);
+  focusWin(key);
+  return true;
+}
+
+function closeWin(key) {
+  const win = document.getElementById('win-' + key);
+  if (!win) return;
+  const wasFocused = win.classList.contains('focused');
+  win.remove();
+  if (!wasFocused) return;
+  let top = null;
+  document.querySelectorAll('.wb-window').forEach(w => {
+    if (!top || (+w.style.zIndex || 0) > (+top.style.zIndex || 0)) top = w;
+  });
+  if (top) focusWin(top.dataset.key);
+  else {
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach(a => a.classList.remove('active'));
+    const t = document.querySelector('.topbar-title');
+    if (t) t.textContent = 'Desktop';
+  }
+}
+
+function toggleWinMin(key) {
+  const win = document.getElementById('win-' + key);
+  if (!win) return;
+  const min = win.classList.toggle('minimized');
+  if (!min) focusWin(key);
+}
+
+function restoreMax(win) {
+  win.classList.remove('maximized');
+  try {
+    const r = JSON.parse(win.dataset.prev);
+    win.style.left = r.left + 'px';
+    win.style.top = r.top + 'px';
+    win.style.width = r.width + 'px';
+    win.style.height = r.height + 'px';
+  } catch (e) { /* ignore */ }
+  const icon = win.querySelector('[data-act="max"] i');
+  if (icon) icon.className = 'fa-solid fa-maximize';
+}
+
+function toggleWinMax(key) {
+  const win = document.getElementById('win-' + key);
+  const ws = document.getElementById('workspace');
+  if (!win || !ws) return;
+  if (win.classList.contains('maximized')) {
+    restoreMax(win);
+  } else {
+    if (!win.classList.contains('minimized')) win.dataset.prev = JSON.stringify(currentRect(win));
+    win.classList.remove('minimized');
+    win.classList.add('maximized');
+    win.style.left = '0px';
+    win.style.top = '0px';
+    win.style.width = ws.clientWidth + 'px';
+    win.style.height = ws.clientHeight + 'px';
+    const icon = win.querySelector('[data-act="max"] i');
+    if (icon) icon.className = 'fa-solid fa-minimize';
+  }
+  focusWin(key);
+  persistWin(win);
+}
+
+function wireWin(win) {
+  const key = win.dataset.key;
+  const header = win.querySelector('.window-header');
+
+  win.addEventListener('pointerdown', () => focusWin(key), true);
+
+  win.querySelectorAll('.window-btns button').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const act = btn.dataset.act;
+      if (act === 'close') closeWin(key);
+      else if (act === 'min') toggleWinMin(key);
+      else if (act === 'max') toggleWinMax(key);
+    });
+  });
+
+  header.addEventListener('dblclick', e => {
+    if (e.target.closest('button')) return;
+    toggleWinMax(key);
+  });
+
+  header.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    if (win.classList.contains('minimized')) { toggleWinMin(key); return; }
+    e.preventDefault();
+    focusWin(key);
+
+    const ws = document.getElementById('workspace');
+    let startX = e.clientX;
+    let startY = e.clientY;
+    let startL = win.offsetLeft;
+    let startT = win.offsetTop;
+
+    if (win.classList.contains('maximized')) {
+      restoreMax(win);
+      startL = clamp(Math.round(e.clientX - win.offsetWidth / 2),
+        -(win.offsetWidth - 140), Math.max(0, ws.clientWidth - 140));
+      startT = 0;
+      win.style.left = startL + 'px';
+      win.style.top = startT + 'px';
+      startX = e.clientX;
+      startY = e.clientY;
+    }
+
+    header.setPointerCapture(e.pointerId);
+    const onMove = ev => {
+      win.style.left = clamp(startL + ev.clientX - startX, -(win.offsetWidth - 140),
+        Math.max(0, ws.clientWidth - 140)) + 'px';
+      win.style.top = clamp(startT + ev.clientY - startY, 0,
+        Math.max(0, ws.clientHeight - 26)) + 'px';
+    };
+    const onUp = ev => {
+      header.removeEventListener('pointermove', onMove);
+      header.removeEventListener('pointerup', onUp);
+      header.removeEventListener('pointercancel', onUp);
+      try { header.releasePointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+      persistWin(win);
+    };
+    header.addEventListener('pointermove', onMove);
+    header.addEventListener('pointerup', onUp);
+    header.addEventListener('pointercancel', onUp);
+  });
+
+  win.querySelectorAll('.rs').forEach(handle => {
+    handle.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      if (win.classList.contains('minimized') || win.classList.contains('maximized')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      focusWin(key);
+
+      const dir = handle.dataset.dir;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const s = { left: win.offsetLeft, top: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight };
+      const MIN_W = 340, MIN_H = 180;
+      handle.setPointerCapture(e.pointerId);
+
+      const onMove = ev => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        let left = s.left, top = s.top, w = s.w, h = s.h;
+        if (dir.indexOf('e') >= 0) w = Math.max(MIN_W, s.w + dx);
+        if (dir.indexOf('s') >= 0) h = Math.max(MIN_H, s.h + dy);
+        if (dir.indexOf('w') >= 0) { w = Math.max(MIN_W, s.w - dx); left = s.left + (s.w - w); }
+        if (dir.indexOf('n') >= 0) { h = Math.max(MIN_H, s.h - dy); top = s.top + (s.h - h); }
+        if (top < 0) { h += top; top = 0; }
+        win.style.left = left + 'px';
+        win.style.top = top + 'px';
+        win.style.width = w + 'px';
+        win.style.height = h + 'px';
+      };
+      const onUp = ev => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+        persistWin(win);
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  });
+}
+
+function wireShellNav() {
+  document.querySelectorAll('.sidebar-nav .nav-item').forEach(a => {
+    a.addEventListener('click', e => {
+      if (window.innerWidth < 860) return; // small screens navigate normally
+      const href = a.getAttribute('href') || '';
+      const key = href.split(/[?#]/)[0].replace(/\.html$/, '');
+      if (!WIN_DEFS[key]) return;
+      e.preventDefault();
+      openWin(key);
+    });
+  });
+}
+
+// Links inside a window ask the shell to open/reuse the target window
+// instead of navigating the iframe away from its window.
+if (document.documentElement.classList.contains('embed')) {
+  document.addEventListener('click', e => {
+    if (e.defaultPrevented || e.button !== 0) return;
+    const a = e.target.closest('a[href]');
+    if (!a || a.target === '_blank') return;
+    const href = a.getAttribute('href');
+    if (!href || /^(https?:|mailto:|#)/.test(href)) return;
+    const file = href.split(/[?#]/)[0];
+    if (!/\.html$/.test(file)) return;
+    e.preventDefault();
+    const key = file.replace(/^.*[\\/]/, '').replace(/\.html$/, '');
+    if (window.parent && window.parent !== window && typeof window.parent.openWin === 'function') {
+      window.parent.openWin(key, href);
+    } else {
+      location.href = href;
+    }
+  });
+}
+
+// Keep every frame's theme button in sync when another frame switches it.
+window.addEventListener('storage', e => {
+  if (e.key !== 'tg-theme') return;
+  document.documentElement.classList.toggle('light', e.newValue === 'light');
+  applyThemeLabel();
+});
+
+applyThemeLabel();
+if (isShell()) {
+  wireShellNav();
+  openWin('dashboard');
+}
 checkAuthStatus();
 loadSidebarStatus();
 loadAPIKey();

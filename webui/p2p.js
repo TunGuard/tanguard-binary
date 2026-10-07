@@ -128,6 +128,10 @@ function renderGroups() {
           ${health}
           <button class="btn btn-sm btn-secondary" onclick="copyPsk(${gi})">Copy PSK</button>
           <button class="btn btn-sm btn-secondary" onclick="rePunch(${gi})">Re-punch</button>
+          <div class="win-controls">
+            <button class="win-btn" type="button" title="Collapse" onclick="toggleWinPanel(this)">&#8211;</button>
+            <button class="win-btn" type="button" title="Maximize" onclick="toggleWinMax(this)">&#9633;</button>
+          </div>
         </div>
       </div>
       <div class="table-wrapper">

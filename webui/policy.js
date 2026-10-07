@@ -155,6 +155,10 @@ function renderGroupCard(g) {
         </div>
         ${builtin ? '<span class="chip active"><span class="chip-dot"></span>built-in</span>' : ''}
       </div>
+      <div class="win-controls">
+        <button class="win-btn" type="button" title="Collapse" onclick="toggleWinPanel(this)">&#8211;</button>
+        <button class="win-btn" type="button" title="Maximize" onclick="toggleWinMax(this)">&#9633;</button>
+      </div>
     </div>
     <div class="card-body">
       <div class="policy-rule-list">${rules}</div>
