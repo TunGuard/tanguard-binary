@@ -5,6 +5,29 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.5] - 2026-10-08
+
+### Added
+
+- **Terminal/SSH console.** The API server now exposes an interactive CLI
+  over an SSH gateway and a browser terminal (`/api/ws/console`), plus the
+  WebUI pages for both. The console wraps the full dashboard surface —
+  `peer`, `mesh`, `trp`, `policy`, `backup`, `update`, `logs` — as commands,
+  with a line editor, history, tab completion and `confirm`-style prompts.
+  System utilities (`ping`, `mtr`, `ss`, `tcpdump`, `curl`, `dig`, `nmap`,
+  `nslookup`, `tracepath`, `iperf3`) run live as foreground jobs.
+- **Server-side log viewer.** Log lines are kept in a bounded ring buffer and
+  exposed by `GET /api/logs` with `after`, `search` and `limit` parameters,
+  the `logs` console command, and a WebUI page. `logs -f` tails live and
+  stops on input end or Ctrl-C.
+- **Console documentation** in `commands.md` covering every command verb,
+  its sub-verbs and its flags.
+
+### Changed
+
+- The update endpoint restarts the process in place and no longer holds a
+  builder lock across the request.
+
 ## [2.4.4] - 2026-10-07
 
 ### Changed

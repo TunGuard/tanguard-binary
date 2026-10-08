@@ -40,6 +40,9 @@ func (a *API) backupStateFiles() []stateFile {
 	}
 }
 
+// handleBackupDownload streams the archive the dashboard's "Download backup"
+// button asks for. The archive itself is built by exportBackup, which the
+// `backup export` console command uses too.
 func (a *API) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		jsonErr(w, 405, "GET required")
@@ -56,7 +59,29 @@ func (a *API) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 		os.Remove(tmp.Name())
 	}()
 
-	gz := gzip.NewWriter(tmp)
+	if err := a.exportBackup(tmp); err != nil {
+		jsonErr(w, 500, "build backup: "+err.Error())
+		return
+	}
+
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		jsonErr(w, 500, "rewind backup: "+err.Error())
+		return
+	}
+
+	filename := "tanguard-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+	io.Copy(w, tmp)
+	log.Printf("[backup] downloaded by %s", r.RemoteAddr)
+}
+
+// exportBackup writes a complete state archive: a manifest plus every state
+// file the server owns. Both entry points (dashboard download, console
+// `backup export`) go through here so a backup taken from either place
+// restores in the other.
+func (a *API) exportBackup(dest io.Writer) error {
+	gz := gzip.NewWriter(dest)
 	tw := tar.NewWriter(gz)
 
 	manifest, _ := json.MarshalIndent(map[string]interface{}{
@@ -66,8 +91,7 @@ func (a *API) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 		"data_dir":   a.cfg.DataDir,
 	}, "", "  ")
 	if err := writeTarEntry(tw, "manifest.json", manifest, 0600, time.Now()); err != nil {
-		jsonErr(w, 500, "write manifest: "+err.Error())
-		return
+		return fmt.Errorf("write manifest: %w", err)
 	}
 
 	for _, sf := range a.backupStateFiles() {
@@ -83,27 +107,14 @@ func (a *API) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := writeTarEntry(tw, sf.name, data, int64(sf.perm), time.Now()); err != nil {
-			jsonErr(w, 500, "write backup entry: "+err.Error())
-			return
+			return fmt.Errorf("write backup entry: %w", err)
 		}
 	}
 
 	if err := tw.Close(); err != nil {
-		jsonErr(w, 500, "finalize backup: "+err.Error())
-		return
+		return fmt.Errorf("finalize backup: %w", err)
 	}
-	gz.Close()
-
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		jsonErr(w, 500, "rewind backup: "+err.Error())
-		return
-	}
-
-	filename := "tanguard-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-	io.Copy(w, tmp)
-	log.Printf("[backup] downloaded by %s", r.RemoteAddr)
+	return gz.Close()
 }
 
 func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
@@ -123,29 +134,42 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	summary, err := a.importBackup(file)
+	if err != nil {
+		jsonErr(w, errCode(err, 400), err.Error())
+		return
+	}
+	log.Printf("[backup] state restored by %s (%d peers)", r.RemoteAddr, summary["peer_count"])
+	jsonResp(w, 200, summary)
+}
+
+// importBackup restores an archive produced by exportBackup: everything is
+// validated first, then the state files are written so a restart reproduces
+// the backup, then the running process reloads them. It is the single restore
+// path — the dashboard's upload and the console's `backup import` both call it.
+//
+// Failures carry the status the HTTP layer should answer with (400 for an
+// archive that is invalid, 500 for state that could not be written).
+func (a *API) importBackup(src io.Reader) (map[string]interface{}, error) {
 	tmpDir, err := os.MkdirTemp("", "tanguard-restore-*")
 	if err != nil {
-		jsonErr(w, 500, "temp dir: "+err.Error())
-		return
+		return nil, apiErr(500, "temp dir: "+err.Error())
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := extractTarGz(file, tmpDir); err != nil {
-		jsonErr(w, 400, "invalid backup archive: "+err.Error())
-		return
+	if err := extractTarGz(src, tmpDir); err != nil {
+		return nil, apiErr(400, "invalid backup archive: "+err.Error())
 	}
 
 	// --- Validate everything before touching live state ---
 	var restoredPeers []*peers.PeerRecord
 	if data, ok := readBackupFile(tmpDir, "peers.json"); ok {
 		if err := json.Unmarshal(data, &restoredPeers); err != nil {
-			jsonErr(w, 400, "backup contains an invalid peers.json: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid peers.json: "+err.Error())
 		}
 		for _, p := range restoredPeers {
 			if _, err := config.ValidateHexKey(p.PublicKey); err != nil {
-				jsonErr(w, 400, "backup peers.json has an invalid public_key: "+err.Error())
-				return
+				return nil, apiErr(400, "backup peers.json has an invalid public_key: "+err.Error())
 			}
 		}
 	}
@@ -153,8 +177,7 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	var restoredPolicy policy.PolicyFile
 	if data, ok := readBackupFile(tmpDir, "policy_groups.json"); ok {
 		if err := json.Unmarshal(data, &restoredPolicy); err != nil {
-			jsonErr(w, 400, "backup contains an invalid policy_groups.json: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid policy_groups.json: "+err.Error())
 		}
 		// Run the same validation an apply does, so a restore cannot install a
 		// policy that declares the default group, duplicates an id or name, or
@@ -162,8 +185,7 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		// peer list matters: policy_groups.json carries no membership of its own
 		// that can be checked in isolation.
 		if _, err := restoredPolicy.ValidateAgainst(nil, nil); err != nil {
-			jsonErr(w, 400, "backup contains an invalid policy_groups.json: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid policy_groups.json: "+err.Error())
 		}
 	}
 
@@ -171,28 +193,24 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if data, ok := readBackupFile(tmpDir, "server_private.key"); ok {
 		restoredKey = strings.TrimSpace(string(data))
 		if _, err := config.ValidateHexKey(restoredKey); err != nil {
-			jsonErr(w, 400, "backup contains an invalid server_private.key: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid server_private.key: "+err.Error())
 		}
 		if _, err := config.PrivToPub(restoredKey); err != nil {
-			jsonErr(w, 400, "backup contains an invalid server_private.key: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid server_private.key: "+err.Error())
 		}
 	}
 
 	if data, ok := readBackupFile(tmpDir, "web_credentials.json"); ok {
 		var c auth.WebCredentials
 		if err := json.Unmarshal(data, &c); err != nil {
-			jsonErr(w, 400, "backup contains an invalid web_credentials.json: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid web_credentials.json: "+err.Error())
 		}
 	}
 
 	if data, ok := readBackupFile(tmpDir, "api_key.json"); ok {
 		var k auth.APIKeyRecord
 		if err := json.Unmarshal(data, &k); err != nil {
-			jsonErr(w, 400, "backup contains an invalid api_key.json: "+err.Error())
-			return
+			return nil, apiErr(400, "backup contains an invalid api_key.json: "+err.Error())
 		}
 	}
 
@@ -200,12 +218,10 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	for _, sf := range a.backupStateFiles() {
 		if data, ok := readBackupFile(tmpDir, sf.name); ok {
 			if err := config.WriteFile(sf.path, data, sf.perm); err != nil {
-				jsonErr(w, 500, "write "+sf.name+": "+err.Error())
-				return
+				return nil, apiErr(500, "write "+sf.name+": "+err.Error())
 			}
 		} else if sf.required {
-			jsonErr(w, 400, "backup is missing required file "+sf.name)
-			return
+			return nil, apiErr(400, "backup is missing required file "+sf.name)
 		} else {
 			if err := os.Remove(sf.path); err != nil && !os.IsNotExist(err) {
 				log.Printf("[backup] WARNING: could not remove %s: %v", sf.path, err)
@@ -229,8 +245,7 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if a.wg != nil {
 		if restoredKey != "" {
 			if err := a.wg.Configure(restoredKey, a.cfg.ListenPort); err != nil {
-				jsonErr(w, 500, "apply restored server key: "+err.Error())
-				return
+				return nil, apiErr(500, "apply restored server key: "+err.Error())
 			}
 			if err := config.WriteFile(filepath.Join(a.cfg.DataDir, "server_wg_pubkey.txt"), []byte(a.wg.PublicKey()), 0644); err != nil {
 				log.Printf("[backup] WARNING: could not refresh public key file: %v", err)
@@ -247,13 +262,12 @@ func (a *API) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[backup] WARNING: reload API key after restore: %v", err)
 	}
 
-	log.Printf("[backup] state restored by %s (%d peers)", r.RemoteAddr, len(a.store.All()))
-	jsonResp(w, 200, map[string]interface{}{
+	return map[string]interface{}{
 		"success":           true,
 		"peer_count":        len(a.store.All()),
 		"server_public_key": a.wg.PublicKey(),
 		"restart_required":  false,
-	})
+	}, nil
 }
 
 func writeTarEntry(tw *tar.Writer, name string, data []byte, mode int64, modTime time.Time) error {

@@ -263,6 +263,8 @@ const WIN_DEFS = {
   p2p:       { title: 'P2P Mesh',         icon: 'fa-diagram-project', href: 'p2p.html' },
   trp:       { title: 'TRP Port Mapping', icon: 'fa-route',           href: 'trp.html' },
   policy:    { title: 'Policy Groups',    icon: 'fa-shield-halved',   href: 'policy.html' },
+  terminal:  { title: 'Terminal',         icon: 'fa-terminal',        href: 'terminal.html' },
+  systemlogs:{ title: 'System Logs',      icon: 'fa-file-lines',      href: 'systemlogs.html' },
   settings:  { title: 'Settings',         icon: 'fa-gear',            href: 'settings.html' }
 };
 let winZ = 30;

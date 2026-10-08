@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -176,6 +177,9 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	// Everything the service logs also lands in the in-memory ring the
+	// System Logs window and the CLI's `logs` command read.
+	log.SetOutput(io.MultiWriter(os.Stderr, api.ServerLogBuffer()))
 	log.Println("[main] TunGuard - userspace WireGuard server")
 
 	cfg := config.LoadConfig()
@@ -265,7 +269,7 @@ func main() {
 	}
 
 	if cfg.SSHEnabled {
-		sshGW, err := api.NewSSHGateway(cfg, creds)
+		sshGW, err := api.NewSSHGateway(cfg, creds, apiSrv)
 		if err != nil {
 			log.Printf("[main] WARNING: SSH gateway init failed: %v", err)
 		} else {

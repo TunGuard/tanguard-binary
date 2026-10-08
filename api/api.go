@@ -108,6 +108,9 @@ func (a *API) Start() {
 	mux.Handle("/api/key", a.requireDashboardAuth(a.handleAPIKey))
 	mux.Handle("/api/key/regenerate", a.requireDashboardAuth(a.handleAPIKeyRegenerate))
 	mux.Handle("/api/ws/ssh", a.requireAPI(a.handleWebSSH))
+	mux.Handle("/api/ws/console", a.requireAPI(a.handleWebConsole))
+	mux.Handle("/api/logs", a.requireAPI(a.handleLogs))
+	mux.Handle("/api/logs/clear", a.requireAPI(a.handleLogsClear))
 	mux.Handle("/api/version", a.requireAPI(a.handleVersion))
 	mux.Handle("/api/update", a.requireAPI(a.handleUpdate))
 	if a.monitor != nil {
@@ -329,6 +332,15 @@ func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
+		if r.Method == "OPTIONS" {
+			return
+		}
+		// The dashboard + log window poll these every few seconds; logging them
+		// would flood the very buffer the System Logs window is tailing.
+		switch r.URL.Path {
+		case "/api/logs", "/api/status", "/api/health":
+			return
+		}
 		log.Printf("[api] %s %s %s", r.Method, r.URL.Path, time.Since(start))
 	})
 }
@@ -965,12 +977,6 @@ func (a *API) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !updateMu.TryLock() {
-		jsonErr(w, 409, "update already in progress")
-		return
-	}
-	defer updateMu.Unlock()
-
 	var req struct {
 		DownloadURL string `json:"download_url"`
 	}
@@ -979,62 +985,85 @@ func (a *API) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exePath, err := os.Executable()
-	if err != nil {
-		jsonErr(w, 500, "cannot find executable path: "+err.Error())
+	if err := a.installUpdate(req.DownloadURL); err != nil {
+		jsonErr(w, errCode(err, 500), err.Error())
 		return
 	}
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		jsonErr(w, 500, "cannot resolve executable: "+err.Error())
-		return
-	}
-
-	log.Printf("[update] downloading %s", req.DownloadURL)
-	resp, err := http.Get(req.DownloadURL)
-	if err != nil {
-		jsonErr(w, 502, "download failed: "+err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		jsonErr(w, 502, fmt.Sprintf("download returned HTTP %d", resp.StatusCode))
-		return
-	}
-
-	tmpPath := exePath + ".tmp"
-	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		jsonErr(w, 500, "cannot create temp file: "+err.Error())
-		return
-	}
-	written, err := io.Copy(out, io.LimitReader(resp.Body, 256<<20))
-	out.Close()
-	if err != nil {
-		os.Remove(tmpPath)
-		jsonErr(w, 500, "download write failed: "+err.Error())
-		return
-	}
-	if written < 100000 {
-		os.Remove(tmpPath)
-		jsonErr(w, 502, "downloaded file too small ("+fmt.Sprintf("%d", written)+" bytes), aborting")
-		return
-	}
-
-	log.Printf("[update] downloaded %d bytes to %s, replacing %s", written, tmpPath, exePath)
-	if err := os.Rename(tmpPath, exePath); err != nil {
-		os.Remove(tmpPath)
-		jsonErr(w, 500, "replace binary failed: "+err.Error())
-		return
-	}
-
-	log.Printf("[update] binary replaced, restarting process")
 
 	jsonResp(w, 200, map[string]interface{}{
 		"success": true,
 		"message": "Update installed. Server is restarting.",
 	})
+	a.restartProcess()
+}
 
+// installUpdate downloads a release binary and swaps it in for the running
+// executable. The dashboard's Update button and the console's `update
+// install` both run it, so a replacement is attempted from exactly one place
+// and only one update can be in flight at a time.
+func (a *API) installUpdate(downloadURL string) error {
+	if !updateMu.TryLock() {
+		return apiErr(409, "update already in progress")
+	}
+	defer updateMu.Unlock()
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return apiErr(500, "cannot find executable path: "+err.Error())
+	}
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return apiErr(500, "cannot resolve executable: "+err.Error())
+	}
+
+	log.Printf("[update] downloading %s", downloadURL)
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return apiErr(502, "download failed: "+err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return apiErr(502, fmt.Sprintf("download returned HTTP %d", resp.StatusCode))
+	}
+
+	tmpPath := exePath + ".tmp"
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return apiErr(500, "cannot create temp file: "+err.Error())
+	}
+	written, err := io.Copy(out, io.LimitReader(resp.Body, 256<<20))
+	out.Close()
+	if err != nil {
+		os.Remove(tmpPath)
+		return apiErr(500, "download write failed: "+err.Error())
+	}
+	if written < 100000 {
+		os.Remove(tmpPath)
+		return apiErr(502, "downloaded file too small ("+fmt.Sprintf("%d", written)+" bytes), aborting")
+	}
+
+	log.Printf("[update] downloaded %d bytes to %s, replacing %s", written, tmpPath, exePath)
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		os.Remove(tmpPath)
+		return apiErr(500, "replace binary failed: "+err.Error())
+	}
+
+	log.Printf("[update] binary replaced, restarting process")
+	return nil
+}
+
+// restartProcess re-executes the (now replaced) binary and exits. Callers
+// have already sent their success response, so the restart happens after the
+// client has been told what is going on.
+func (a *API) restartProcess() {
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Printf("[update] restart failed: %v", err)
+		return
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		cmd := exec.Command(exePath, os.Args[1:]...)

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,15 +29,16 @@ import (
 type SSHGateway struct {
 	cfg    *config.Config
 	creds  *auth.CredentialStore
+	api    *API // the CLI sessions run against this server's state
 	signer ssh.Signer
 }
 
-func NewSSHGateway(cfg *config.Config, creds *auth.CredentialStore) (*SSHGateway, error) {
+func NewSSHGateway(cfg *config.Config, creds *auth.CredentialStore, apiSrv *API) (*SSHGateway, error) {
 	signer, err := loadOrGenerateHostKey(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("ssh host key: %w", err)
 	}
-	return &SSHGateway{cfg: cfg, creds: creds, signer: signer}, nil
+	return &SSHGateway{cfg: cfg, creds: creds, api: apiSrv, signer: signer}, nil
 }
 
 func loadOrGenerateHostKey(cfg *config.Config) (ssh.Signer, error) {
@@ -119,7 +121,7 @@ func (g *SSHGateway) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 		if newChannel.ChannelType() == "direct-tcpip" {
 			go g.handleDirectTCPIP(newChannel)
 		} else if newChannel.ChannelType() == "session" {
-			go g.handleSessionChannel(newChannel)
+			go g.handleSessionChannel(newChannel, sConn.User())
 		} else {
 			newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
 		}
@@ -155,24 +157,83 @@ func (g *SSHGateway) handleDirectTCPIP(newChannel ssh.NewChannel) {
 	remote.Close()
 }
 
-func (g *SSHGateway) handleSessionChannel(newChannel ssh.NewChannel) {
+// sshPTYRequest is the payload of RFC 4254 "pty-req".
+type sshPTYRequest struct {
+	Term   string
+	Cols   uint32
+	Rows   uint32
+	Width  uint32
+	Height uint32
+	Modes  string
+}
+
+// sshWindowChange is the payload of "window-change" (no term string).
+type sshWindowChange struct {
+	Cols   uint32
+	Rows   uint32
+	Width  uint32
+	Height uint32
+}
+
+// sshExecRequest is the payload of "exec": one command line.
+type sshExecRequest struct {
+	Command string
+}
+
+// handleSessionChannel runs the TunGuard CLI over an SSH session channel.
+// pty-req and window-change drive the terminal size, shell runs the
+// interactive session, exec runs a single line — so `ssh host status` works
+// from a script and `ssh host` drops into the same CLI the dashboard's
+// Terminal window shows.
+func (g *SSHGateway) handleSessionChannel(newChannel ssh.NewChannel, user string) {
 	channel, reqs, err := newChannel.Accept()
 	if err != nil {
 		return
 	}
 	defer channel.Close()
 
+	// The session exists before any request arrives so pty-req and
+	// window-change can size it while Run is going.
+	sess := newConsoleSession(g.api, user, channel, channel)
+	defer sess.Close()
+
+	type startSpec struct{ exec string }
+	start := make(chan startSpec, 1)
+
 	go func() {
+		defer close(start)
 		for req := range reqs {
 			switch req.Type {
-			case "shell", "exec":
-				channel.Write([]byte("TunGuard SSH Gateway\r\n"))
-				channel.Write([]byte("Use as jump host: ssh -J user@host:" + g.cfg.SSHListen + " user@target\r\n"))
-				channel.Write([]byte("Or connect directly to WireGuard peers.\r\n"))
-				channel.SendRequest("exit-status", false, ssh.Marshal(&struct{ Status uint32 }{0}))
-				channel.Close()
-			case "pty-req", "window-change":
+			case "pty-req":
+				var p sshPTYRequest
+				if err := ssh.Unmarshal(req.Payload, &p); err == nil {
+					sess.SetCols(int(p.Cols))
+				}
 				req.Reply(true, nil)
+			case "window-change":
+				var w sshWindowChange
+				if err := ssh.Unmarshal(req.Payload, &w); err == nil {
+					sess.SetCols(int(w.Cols))
+				}
+				if req.WantReply {
+					req.Reply(true, nil)
+				}
+			case "env":
+				req.Reply(true, nil) // LANG and friends: accepted, not acted on
+			case "shell":
+				req.Reply(true, nil)
+				select {
+				case start <- startSpec{}:
+				default:
+				}
+			case "exec":
+				var e sshExecRequest
+				ssh.Unmarshal(req.Payload, &e)
+				req.Reply(true, nil)
+				select {
+				case start <- startSpec{exec: strings.TrimSpace(e.Command)}:
+				default:
+				}
 			default:
 				if req.WantReply {
 					req.Reply(false, nil)
@@ -180,6 +241,23 @@ func (g *SSHGateway) handleSessionChannel(newChannel ssh.NewChannel) {
 			}
 		}
 	}()
+
+	spec, ok := <-start
+	if !ok {
+		return // connection dropped before a command arrived
+	}
+
+	status := uint32(0)
+	if spec.exec != "" {
+		sess.Exec(spec.exec)
+	} else if err := sess.Run(); err != nil {
+		log.Printf("[ssh] session %s: %v", user, err)
+		status = 1
+	}
+	if sess.exitCode != 0 {
+		status = uint32(sess.exitCode)
+	}
+	channel.SendRequest("exit-status", false, ssh.Marshal(&struct{ Status uint32 }{status}))
 }
 
 func parseDirectTCPIPPayload(payload []byte) (host string, port uint32) {
