@@ -191,6 +191,20 @@ func buildCommands() []*cliCommand {
 			run:   cmdJump,
 		},
 		{
+			name:  "ssh",
+			usage: "ssh [-p port] [-l user] [-i key] [--password pass] [user@]host[:port] [command]",
+			desc:  "open an interactive SSH session to a device (peers resolve by name)",
+			run:   cmdSSH,
+			complete: func(s *consoleSession, _ []string) []string {
+				var names []string
+				for _, p := range s.api.store.All() {
+					names = append(names, deviceLabel(p))
+					names = append(names, strings.TrimSuffix(p.AllowedIP, "/32"))
+				}
+				return names
+			},
+		},
+		{
 			name:  "clear",
 			usage: "clear",
 			desc:  "clear the screen (also: Ctrl-L)",
@@ -226,7 +240,7 @@ func lookupCommand(name string) *cliCommand {
 
 func cmdHelp(s *consoleSession, args []string) {
 	if len(args) == 0 {
-		s.printf("\x1b[1mTunGuard CLI\x1b[0m — commands:\r\n\r\n")
+		s.printf("%s — commands:\r\n\r\n", paint(ansiBoldCyan, "TunGuard CLI"))
 		width := 0
 		for _, c := range allCommands() {
 			if len(c.name) > width {
@@ -234,10 +248,10 @@ func cmdHelp(s *consoleSession, args []string) {
 			}
 		}
 		for _, c := range allCommands() {
-			s.printf("  \x1b[1m%-*s\x1b[0m  %s\r\n", width, c.name, c.desc)
+			s.printf("  %s  %s\r\n", paint(ansiBoldCyan, fmt.Sprintf("%-*s", width, c.name)), paint(ansiDim, c.desc))
 		}
-		s.printf("\r\nTab completes commands and arguments; ↑/↓ walks history.\r\n")
-		s.printf("`help <command>` shows usage. `exit` disconnects.\r\n")
+		s.printf("\r\n%s\r\n", paint(ansiDim, "Tab completes commands and arguments; ↑/↓ walks history."))
+		s.printf("%s\r\n", paint(ansiDim, "`help <command>` shows usage. `exit` disconnects."))
 		return
 	}
 	c := lookupCommand(args[0])
@@ -245,10 +259,10 @@ func cmdHelp(s *consoleSession, args []string) {
 		s.errf("no such command %q", args[0])
 		return
 	}
-	s.printf("\x1b[1m%s\x1b[0m — %s\r\n\r\n", c.name, c.desc)
-	s.printf("usage: %s\r\n", c.usage)
+	s.printf("%s — %s\r\n\r\n", paint(ansiBoldCyan, c.name), paint(ansiDim, c.desc))
+	s.printf("%s %s\r\n", paint(ansiDim, "usage:"), paint(ansiYellow, c.usage))
 	if len(c.subs) > 0 {
-		s.printf("words: %s\r\n", strings.Join(c.subs, ", "))
+		s.printf("%s %s\r\n", paint(ansiDim, "words:"), paint(ansiBold, strings.Join(c.subs, ", ")))
 	}
 }
 
@@ -256,40 +270,41 @@ func cmdStatus(s *consoleSession, _ []string) {
 	a := s.api
 	st := wg.CollectSystemStats(a.cfg.DataDir)
 
-	s.printf("\x1b[1;36mTunGuard\x1b[0m %s — %s\r\n", config.Version, st.Hostname)
+	s.printf("%s %s — %s\r\n", paint(ansiBoldCyan, "TunGuard"), config.Version, paint(ansiBold, st.Hostname))
 	if st.OS != "" || st.Kernel != "" {
-		s.printf("  system        : %s %s\r\n", st.OS, st.Kernel)
+		s.stat("system", st.OS+" "+st.Kernel)
 	}
-	s.printf("  uptime        : %s\r\n", uptimeTextU(st.Uptime))
-	s.printf("  cpu           : %.0f%% of %d core(s), load %s\r\n", st.CPUPercent, st.CPUCores, loadText(st.Load))
-	s.printf("  memory        : %s / %s (%.0f%%)\r\n", humanBytesU(st.Memory.Used), humanBytesU(st.Memory.Total), st.Memory.Percent)
+	s.stat("uptime", uptimeTextU(st.Uptime))
+	s.stat("cpu", fmt.Sprintf("%.0f%% of %d core(s), load %s", st.CPUPercent, st.CPUCores, paint(ansiCyan, loadText(st.Load))))
+	s.stat("memory", fmt.Sprintf("%s / %s (%.0f%%)", humanBytesU(st.Memory.Used), humanBytesU(st.Memory.Total), st.Memory.Percent))
 	if st.Disk.Path != "" {
-		s.printf("  disk          : %s / %s (%.0f%%) %s\r\n", humanBytesU(st.Disk.Used), humanBytesU(st.Disk.Total), st.Disk.Percent, st.Disk.Path)
+		s.stat("disk", fmt.Sprintf("%s / %s (%.0f%%) %s", humanBytesU(st.Disk.Used), humanBytesU(st.Disk.Total), st.Disk.Percent, st.Disk.Path))
 	}
-	s.printf("  subnet        : %s\r\n", a.cfg.Subnet)
+	s.stat("subnet", a.cfg.Subnet)
 
 	if a.wg != nil {
 		if dev, err := a.wg.GetStatus(); err == nil {
-			s.printf("  wireguard     : port %d, %d peer(s), key %s\r\n",
-				dev.ListenPort, len(dev.Peers), peers.ShortKey(dev.ServerPublicKey))
+			s.stat("wireguard", paint(ansiGreen, "attached")+
+				fmt.Sprintf(" — port %d, %d peer(s), key %s",
+					dev.ListenPort, len(dev.Peers), peers.ShortKey(dev.ServerPublicKey)))
 		}
 	} else {
-		s.printf("  wireguard     : not attached (mesh-only process)\r\n")
+		s.stat("wireguard", paint(ansiRed, "not attached")+paint(ansiDim, " (mesh-only process)"))
 	}
 
-	s.printf("  dashboard     : %s\r\n", a.cfg.APIListen)
+	s.stat("dashboard", a.cfg.APIListen)
 	if a.cfg.SSHEnabled {
-		s.printf("  ssh gateway   : %s (jump host, dashboard login)\r\n", a.cfg.SSHListen)
+		s.stat("ssh gateway", paint(ansiGreen, a.cfg.SSHListen)+paint(ansiDim, " (jump host, dashboard login)"))
 	} else {
-		s.printf("  ssh gateway   : disabled (SSH_ENABLED)\r\n")
+		s.stat("ssh gateway", paint(ansiRed, "disabled")+paint(ansiDim, " (SSH_ENABLED)"))
 	}
 
 	if a.hub != nil {
 		m := a.hub.MeshStatus()
-		s.printf("  mesh          : %v node(s), %v online, %v group(s) — control %v\r\n",
-			m["nodes"], m["online"], m["groups"], m["control_listen"])
+		s.stat("mesh", fmt.Sprintf("%v node(s), %v online, %v group(s) %s control %v",
+			m["nodes"], paint(ansiGreen, fmt.Sprint(m["online"])), m["groups"], paint(ansiDim, "—"), m["control_listen"]))
 	} else {
-		s.printf("  mesh          : disabled (MESH_ENABLED)\r\n")
+		s.stat("mesh", paint(ansiRed, "disabled")+paint(ansiDim, " (MESH_ENABLED)"))
 	}
 
 	if a.policies != nil {
@@ -297,11 +312,11 @@ func cmdStatus(s *consoleSession, _ []string) {
 		if custom < 0 {
 			custom = 0
 		}
-		state := "inactive"
+		stateText := state("inactive")
 		if a.policies.IsActive() {
-			state = "active"
+			stateText = state("active")
 		}
-		s.printf("  policy        : %d group(s), %s\r\n", custom, state)
+		s.stat("policy", fmt.Sprintf("%d group(s), %s", custom, stateText))
 	}
 }
 
@@ -461,10 +476,10 @@ func cmdPeerList(s *consoleSession, _ []string) {
 
 	var rows [][]string
 	for _, rec := range a.store.All() {
-		seen := "never"
+		seen := paint(ansiDim, "never")
 		rx, tx := "—", "—"
 		if p, ok := byKey[rec.PublicKey]; ok {
-			seen = ageText(p.LastHandshakeSec)
+			seen = paint(ansiGreen, ageText(p.LastHandshakeSec))
 			rx = humanBytes(p.RxBytes)
 			tx = humanBytes(p.TxBytes)
 		}
@@ -476,7 +491,7 @@ func cmdPeerList(s *consoleSession, _ []string) {
 			}
 		}
 		rows = append(rows, []string{
-			deviceLabel(rec), rec.AllowedIP, peers.ShortKey(rec.PublicKey), seen, rx, tx, group,
+			paint(ansiBold, deviceLabel(rec)), rec.AllowedIP, peers.ShortKey(rec.PublicKey), seen, rx, tx, group,
 		})
 	}
 	if len(rows) == 0 {
@@ -559,9 +574,9 @@ func cmdPeerNew(s *consoleSession, args []string) {
 		return
 	}
 
-	s.printf("created \x1b[1m%s\x1b[0m at %s\r\n", name, ip)
-	s.printf("  public key : %s\r\n", clientPub)
-	s.printf("  endpoint   : %s:%d\r\n\r\n", host, a.cfg.ListenPort)
+	s.printf("\x1b[1;32mcreated %s at %s\x1b[0m\r\n", name, ip)
+	s.printf("  %s : %s\r\n", paint(ansiDim, "public key"), clientPub)
+	s.printf("  %s   : %s:%d\r\n\r\n", paint(ansiDim, "endpoint"), host, a.cfg.ListenPort)
 	s.printf("%s", a.peerConfigText(rec, host, dns))
 }
 
@@ -646,7 +661,7 @@ func cmdPeerAdd(s *consoleSession, args []string) {
 		s.errf("peer added, but persisting failed: %s", saveErr)
 		return
 	}
-	s.printf("imported \x1b[1m%s\x1b[0m at %s (key %s)\r\n", name, ip, peers.ShortKey(pub))
+	s.printf("\x1b[1;32mimported %s at %s\x1b[0m (key %s)\r\n", name, ip, peers.ShortKey(pub))
 }
 
 func cmdPeerRemove(s *consoleSession, args []string) {
@@ -674,7 +689,7 @@ func cmdPeerRemove(s *consoleSession, args []string) {
 		s.errf("peer removed, but persisting failed: %s", err)
 		return
 	}
-	s.printf("removed %s (%s)\r\n", deviceLabel(rec), rec.AllowedIP)
+	s.printf("\x1b[32mremoved %s (%s)\x1b[0m\r\n", deviceLabel(rec), rec.AllowedIP)
 }
 
 func cmdPeerConfig(s *consoleSession, args []string) {
@@ -735,20 +750,20 @@ func cmdMesh(s *consoleSession, args []string) {
 	switch verb {
 	case "status", "":
 		m := a.hub.MeshStatus()
-		s.printf("control  : %v\r\n", m["control_listen"])
-		s.printf("relay    : %v\r\n", m["relay_listen"])
-		s.printf("nodes    : %v (%v online)\r\n", m["nodes"], m["online"])
-		s.printf("groups   : %v\r\n", m["groups"])
-		s.printf("clients  : %v tun client device(s)\r\n", m["client_devices"])
+		s.printf("  %s : %v\r\n", paint(ansiDim, "control"), m["control_listen"])
+		s.printf("  %s   : %v\r\n", paint(ansiDim, "relay"), m["relay_listen"])
+		s.printf("  %s   : %v (%v online)\r\n", paint(ansiDim, "nodes"), m["nodes"], paint(ansiGreen, fmt.Sprint(m["online"])))
+		s.printf("  %s  : %v\r\n", paint(ansiDim, "groups"), m["groups"])
+		s.printf("  %s : %v tun client device(s)\r\n", paint(ansiDim, "clients"), m["client_devices"])
 	case "nodes":
 		var rows [][]string
 		for _, n := range a.hub.ListNodes(false) {
-			state := "offline"
+			stateText := "offline"
 			if n.Online {
-				state = "online"
+				stateText = "online"
 			}
 			rows = append(rows, []string{
-				n.Name, shortID(n.ID), state, orDash(n.ControlIP),
+				paint(ansiBold, n.Name), shortID(n.ID), state(stateText), orDash(n.ControlIP),
 				fmt.Sprintf("%d/%d", n.DirectPeers, n.Peers),
 				nodeAge(n.LastSeen, n.ConnectedFor),
 			})
@@ -767,13 +782,13 @@ func cmdMesh(s *consoleSession, args []string) {
 		var rows [][]string
 		for _, g := range groups {
 			rows = append(rows, []string{
-				orDash(g.Label), shortPSK(g.PSK),
-				fmt.Sprintf("%d", g.Nodes), fmt.Sprintf("%d", g.Online),
+				paint(ansiBold, orDash(g.Label)), shortPSK(g.PSK),
+				fmt.Sprintf("%d", g.Nodes), paint(ansiGreen, fmt.Sprintf("%d", g.Online)),
 				fmt.Sprintf("%d/%d", g.Direct, g.Links),
 			})
 		}
 		s.table([]string{"GROUP", "PSK", "NODES", "ONLINE", "DIRECT/LINKS"}, rows)
-		s.printf("auto-mesh runs per group: `mesh group <label> off` drops its relay links\r\n")
+		s.notef("auto-mesh runs per group: `mesh group <label> off` drops its relay links")
 	case "links":
 		links := a.hub.ListLinks()
 		if len(links) == 0 {
@@ -782,20 +797,20 @@ func cmdMesh(s *consoleSession, args []string) {
 		}
 		var rows [][]string
 		for _, l := range links {
-			state := "via hub"
+			stateText := "via hub"
 			if l.Direct {
-				state = "direct"
+				stateText = "direct"
 			}
 			test := "—"
 			if !l.Online {
-				test = "offline"
+				test = paint(ansiRed, "offline")
 			} else if l.Tested {
-				test = fmt.Sprintf("%d ms", l.RTTMS)
+				test = paint(ansiGreen, fmt.Sprintf("%d ms", l.RTTMS))
 			} else if l.Direct {
-				test = "no answer"
+				test = paint(ansiYellow, "no answer")
 			}
 			rows = append(rows, []string{
-				orDash(l.FromName), orDash(l.ToName), state, test, orDash(l.Endpoint),
+				paint(ansiBold, orDash(l.FromName)), paint(ansiBold, orDash(l.ToName)), state(stateText), test, orDash(l.Endpoint),
 			})
 		}
 		s.table([]string{"FROM", "TO", "PATH", "LINK TEST", "ENDPOINT"}, rows)
@@ -810,10 +825,10 @@ func cmdMesh(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("node \x1b[1m%s\x1b[0m registered\r\n", rec.Name)
-		s.printf("  id       : %s\r\n", rec.ID)
-		s.printf("  join key : %s\r\n", rec.PSK)
-		s.printf("  enter the join key on the device to enroll it\r\n")
+		s.printf("\x1b[1;32mnode %s registered\x1b[0m\r\n", rec.Name)
+		s.printf("  %s : %s\r\n", paint(ansiDim, "id"), rec.ID)
+		s.printf("  %s : %s\r\n", paint(ansiDim, "join key"), paint(ansiYellow, rec.PSK))
+		s.notef("  enter the join key on the device to enroll it")
 	case "remove":
 		if len(args) != 1 {
 			s.errf("usage: mesh remove <node>")
@@ -828,7 +843,7 @@ func cmdMesh(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("node %s removed\r\n", id)
+		s.printf("\x1b[32mnode %s removed\x1b[0m\r\n", id)
 	case "reset":
 		if len(args) != 1 {
 			s.errf("usage: mesh reset <node>")
@@ -840,7 +855,7 @@ func cmdMesh(s *consoleSession, args []string) {
 			return
 		}
 		a.hub.ResetNode(id)
-		s.printf("node %s reset — it re-identifies on its next connection\r\n", id)
+		s.printf("\x1b[32mnode %s reset\x1b[0m — it re-identifies on its next connection\r\n", id)
 	case "punch":
 		if len(args) != 2 {
 			s.errf("usage: mesh punch <node-a> <node-b>")
@@ -860,7 +875,7 @@ func cmdMesh(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("punching %s ↔ %s\r\n", args[0], args[1])
+		s.printf("\x1b[32mpunching %s ↔ %s\x1b[0m\r\n", args[0], args[1])
 	case "group":
 		if len(args) != 2 {
 			s.errf("usage: mesh group <label> on|off")
@@ -882,9 +897,9 @@ func cmdMesh(s *consoleSession, args []string) {
 			return
 		}
 		if enable {
-			s.printf("auto-mesh re-punched for %d node(s) in %s\r\n", n, args[0])
+			s.printf("\x1b[32mauto-mesh re-punched for %d node(s) in %s\x1b[0m\r\n", n, args[0])
 		} else {
-			s.printf("relay links dropped for %d node(s) in %s (direct links stay)\r\n", n, args[0])
+			s.printf("\x1b[33mrelay links dropped for %d node(s) in %s\x1b[0m (direct links stay)\r\n", n, args[0])
 		}
 	case "relay":
 		cmdMeshRelay(s, args)
@@ -920,7 +935,7 @@ func cmdMeshRelay(s *consoleSession, args []string) {
 				s.errf("%s", err)
 				return
 			}
-			s.printf("node %s now carries relay traffic for others\r\n", id)
+			s.printf("\x1b[32mnode %s now carries relay traffic for others\x1b[0m\r\n", id)
 		}
 	case "leave":
 		if id, ok := needNode("mesh relay leave <node>"); ok {
@@ -928,7 +943,7 @@ func cmdMeshRelay(s *consoleSession, args []string) {
 				s.errf("%s", err)
 				return
 			}
-			s.printf("node %s left the relay set\r\n", id)
+			s.printf("\x1b[33mnode %s left the relay set\x1b[0m\r\n", id)
 		}
 	case "link":
 		if len(args) != 2 {
@@ -949,11 +964,11 @@ func cmdMeshRelay(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("relay link %s → %s established\r\n", args[0], args[1])
+		s.printf("\x1b[32mrelay link %s → %s established\x1b[0m\r\n", args[0], args[1])
 	case "unlink":
 		if id, ok := needNode("mesh relay unlink <node>"); ok {
 			a.hub.Relay().Unlink(id)
-			s.printf("relay link for %s removed\r\n", id)
+			s.printf("\x1b[32mrelay link for %s removed\x1b[0m\r\n", id)
 		}
 	default:
 		s.errf("usage: mesh relay join <node> | leave <node> | link <a> <b> | unlink <node>")
@@ -1007,9 +1022,9 @@ func cmdTRP(s *consoleSession, args []string) {
 		}
 		var rows [][]string
 		for _, p := range proxies {
-			state := "disabled"
+			stateText := "disabled"
 			if en, ok := p["enabled"].(bool); ok && en {
-				state = "enabled"
+				stateText = "enabled"
 			}
 			nodeName := orDashStr(p["name"], p["node_id"])
 			if id, ok := p["node_id"].(string); ok && id != "" {
@@ -1019,10 +1034,10 @@ func cmdTRP(s *consoleSession, args []string) {
 			}
 			rows = append(rows, []string{
 				fmt.Sprint(p["id"]),
-				nodeName,
+				paint(ansiBold, nodeName),
 				fmt.Sprintf("%v:%v", orDashStr(p["bind_ip"], "*"), p["bind_port"]),
 				fmt.Sprintf("%v:%v", orDashStr(p["target_ip"], ""), p["target_port"]),
-				state,
+				state(stateText),
 			})
 		}
 		s.table([]string{"ID", "NODE", "BIND", "TARGET", "STATE"}, rows)
@@ -1075,7 +1090,7 @@ func cmdTRP(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("mapping %s:%d → %s:%d (id %s)\r\n", rec.BindIP, rec.BindPort, rec.TargetIP, targetPort, rec.ID)
+		s.printf("\x1b[32mmapping %s:%d → %s:%d\x1b[0m (id %s)\r\n", rec.BindIP, rec.BindPort, rec.TargetIP, targetPort, rec.ID)
 	case "remove":
 		if len(args) != 1 {
 			s.errf("usage: trp remove <id|bind-address:port>")
@@ -1090,7 +1105,7 @@ func cmdTRP(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("mapping %s removed\r\n", id)
+		s.printf("\x1b[32mmapping %s removed\x1b[0m\r\n", id)
 	default:
 		s.errf("usage: %s", lookupCommand("trp").usage)
 	}
@@ -1124,15 +1139,15 @@ func cmdPolicy(s *consoleSession, args []string) {
 				}
 			}
 			rows = append(rows, []string{
-				g.Name, g.ID, strconv.Itoa(members), ruleFlags(g), builtinTag(g),
+				paint(ansiBold, g.Name), paint(ansiDim, g.ID), strconv.Itoa(members), ruleFlags(g), paint(ansiDim, builtinTag(g)),
 			})
 		}
 		s.table([]string{"GROUP", "ID", "DEVICES", "RULES", "NOTE"}, rows)
-		s.printf("rules: device-to-device, p2p mesh, trp mapping, wg internet (y/n)\r\n")
+		s.notef("rules: device-to-device, p2p mesh, trp mapping, wg internet (y/n)")
 		if a.wg != nil {
 			inter, access := a.wg.PolicyDrops()
 			if inter+access > 0 {
-				s.printf("dropped by policy: %d inter-device, %d internet packet(s)\r\n", inter, access)
+				s.printf("%s %d inter-device, %d internet packet(s)\r\n", paint(ansiYellow, "dropped by policy:"), inter, access)
 			}
 		}
 	case "show":
@@ -1145,27 +1160,27 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("\x1b[1m%s\x1b[0m (%s)%s\r\n", g.Name, g.ID, builtinTag(g))
-		s.printf("  devices talk to each other : %s\r\n", yesNo(g.AllowInterDevice))
-		s.printf("  p2p automatic mesh         : %s\r\n", yesNo(g.AllowP2PMesh))
-		s.printf("  trp port mapping           : %s\r\n", yesNo(g.AllowTRP))
-		s.printf("  wg internet access         : %s\r\n", yesNo(g.AllowWGAccess))
+		s.printf("%s %s%s\r\n", paint(ansiBoldCyan, g.Name), paint(ansiDim, "("+g.ID+")"), paint(ansiDim, builtinTag(g)))
+		s.printf("  %s : %s\r\n", paint(ansiDim, "devices talk to each other"), state(yesNo(g.AllowInterDevice)))
+		s.printf("  %s : %s\r\n", paint(ansiDim, "p2p automatic mesh        "), state(yesNo(g.AllowP2PMesh)))
+		s.printf("  %s : %s\r\n", paint(ansiDim, "trp port mapping          "), state(yesNo(g.AllowTRP)))
+		s.printf("  %s : %s\r\n", paint(ansiDim, "wg internet access        "), state(yesNo(g.AllowWGAccess)))
 		ids := a.policies.Members(g.ID)
 		if len(ids) > 0 {
-			s.printf("  members:\r\n")
+			s.printf("  %s\r\n", paint(ansiDim, "members:"))
 			for _, key := range ids {
 				label := peers.ShortKey(key)
 				if rec := a.store.Get(key); rec != nil {
 					label = deviceLabel(rec)
 				}
-				s.printf("    %s\r\n", label)
+				s.printf("    %s %s\r\n", paint(ansiGreen, "•"), label)
 			}
 		}
 		deviceIDs := a.policies.DeviceMembers(g.ID)
 		if len(deviceIDs) > 0 {
-			s.printf("  client devices:\r\n")
+			s.printf("  %s\r\n", paint(ansiDim, "client devices:"))
 			for _, id := range deviceIDs {
-				s.printf("    %s\r\n", id)
+				s.printf("    %s %s\r\n", paint(ansiGreen, "•"), id)
 			}
 		}
 	case "create":
@@ -1188,8 +1203,9 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("group \x1b[1m%s\x1b[0m created\r\n", g.Name)
-		s.printf("  rules: %s — change them with `policy update %s --wg on …`\r\n", ruleFlags(g), g.Name)
+		s.printf("\x1b[1;32mgroup %s created\x1b[0m\r\n", g.Name)
+		s.printf("  %s %s %s\r\n", paint(ansiDim, "rules:"), ruleFlags(g),
+			paint(ansiDim, "— change them with `policy update "+g.Name+" --wg on …`"))
 	case "update":
 		if len(args) == 0 {
 			s.errf("usage: policy update <group> [--name n] [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off]")
@@ -1242,7 +1258,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("group \x1b[1m%s\x1b[0m updated: %s\r\n", updated.Name, ruleFlags(updated))
+		s.printf("\x1b[1;32mgroup %s updated\x1b[0m: %s\r\n", updated.Name, ruleFlags(updated))
 	case "delete":
 		if len(args) != 1 {
 			s.errf("usage: policy delete <group>")
@@ -1257,7 +1273,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
-		s.printf("group %s deleted — its devices returned to default\r\n", g.Name)
+		s.printf("\x1b[33mgroup %s deleted\x1b[0m — its devices returned to default\r\n", g.Name)
 	case "assign":
 		if len(args) < 2 {
 			s.errf("usage: policy assign <group> <device...>")
@@ -1293,7 +1309,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 				return
 			}
 		}
-		s.printf("%d device(s) moved into %s\r\n", len(keys)+len(deviceIDs), g.Name)
+		s.printf("\x1b[32m%d device(s) moved into %s\x1b[0m\r\n", len(keys)+len(deviceIDs), g.Name)
 	case "unassign":
 		if len(args) == 0 {
 			s.errf("usage: policy unassign <device...>")
@@ -1324,7 +1340,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 				return
 			}
 		}
-		s.printf("%d device(s) returned to the default group\r\n", len(keys)+len(deviceIDs))
+		s.printf("\x1b[32m%d device(s) returned to the default group\x1b[0m\r\n", len(keys)+len(deviceIDs))
 	case "export":
 		if len(args) != 1 {
 			s.errf("usage: policy export <file>")
@@ -1357,7 +1373,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("write %s: %s", args[0], err)
 			return
 		}
-		s.printf("wrote %d group(s) and %d assignment(s) to %s\r\n",
+		s.printf("\x1b[32mwrote %d group(s) and %d assignment(s) to %s\x1b[0m\r\n",
 			len(pf.Groups), len(pf.Assign)+len(pf.DeviceAssign), args[0])
 	case "apply":
 		if len(args) != 1 {
@@ -1387,8 +1403,8 @@ func cmdPolicy(s *consoleSession, args []string) {
 				members += len(a.policies.Members(g.ID)) + len(a.policies.DeviceMembers(g.ID))
 			}
 		}
-		s.printf("applied %d group(s), %d assigned device(s) — policy %s\r\n",
-			groups, members, map[bool]string{true: "active", false: "inactive"}[a.policies.IsActive()])
+		s.printf("\x1b[32mapplied %d group(s), %d assigned device(s)\x1b[0m — policy %s\r\n",
+			groups, members, state(map[bool]string{true: "active", false: "inactive"}[a.policies.IsActive()]))
 	default:
 		s.errf("usage: %s", lookupCommand("policy").usage)
 	}
@@ -1469,33 +1485,33 @@ func cmdSettings(s *consoleSession, args []string) {
 		cmdSettingsSet(s, args[1:])
 		return
 	}
-	s.printf("  interface   : %s (%s, mtu %d)\r\n", a.cfg.InterfaceName, a.cfg.Address, a.cfg.MTU)
-	s.printf("  subnet      : %s\r\n", a.cfg.Subnet)
-	s.printf("  wg port     : %d\r\n", a.cfg.ListenPort)
-	s.printf("  api         : %s\r\n", a.cfg.APIListen)
-	s.printf("  data dir    : %s\r\n", a.cfg.DataDir)
+	s.stat("interface", fmt.Sprintf("%s (%s, mtu %d)", a.cfg.InterfaceName, a.cfg.Address, a.cfg.MTU))
+	s.stat("subnet", a.cfg.Subnet)
+	s.stat("wg port", strconv.Itoa(a.cfg.ListenPort))
+	s.stat("api", a.cfg.APIListen)
+	s.stat("data dir", a.cfg.DataDir)
 	if a.cfg.WebEnabled {
-		s.printf("  dashboard   : enabled (login %s)\r\n", a.effectiveWebUsername())
+		s.stat("dashboard", paint(ansiGreen, "enabled")+paint(ansiDim, " (login "+a.effectiveWebUsername()+")"))
 	} else {
-		s.printf("  dashboard   : disabled (WEB_ENABLED)\r\n")
+		s.stat("dashboard", paint(ansiRed, "disabled")+paint(ansiDim, " (WEB_ENABLED)"))
 	}
 	if a.cfg.SSHEnabled {
-		s.printf("  ssh gateway : %s (key %s)\r\n", a.cfg.SSHListen, orDash(a.cfg.SSHKeyFile))
+		s.stat("ssh gateway", paint(ansiGreen, a.cfg.SSHListen)+paint(ansiDim, " (key "+orDash(a.cfg.SSHKeyFile)+")"))
 	} else {
-		s.printf("  ssh gateway : disabled (SSH_ENABLED)\r\n")
+		s.stat("ssh gateway", paint(ansiRed, "disabled")+paint(ansiDim, " (SSH_ENABLED)"))
 	}
 	if a.cfg.TLSCertFile != "" {
-		s.printf("  tls         : %s + %s\r\n", a.cfg.TLSCertFile, a.cfg.TLSKeyFile)
+		s.stat("tls", a.cfg.TLSCertFile+" + "+a.cfg.TLSKeyFile)
 	} else {
-		s.printf("  tls         : disabled (TLS_CERT_FILE / TLS_KEY_FILE)\r\n")
+		s.stat("tls", paint(ansiRed, "disabled")+paint(ansiDim, " (TLS_CERT_FILE / TLS_KEY_FILE)"))
 	}
 	if a.hub != nil {
-		s.printf("  mesh        : enabled\r\n")
+		s.stat("mesh", paint(ansiGreen, "enabled"))
 	} else {
-		s.printf("  mesh        : disabled (MESH_ENABLED)\r\n")
+		s.stat("mesh", paint(ansiRed, "disabled")+paint(ansiDim, " (MESH_ENABLED)"))
 	}
-	s.printf("\r\nRuntime keys: `settings set port <n>`, `settings set key <hex>`.\r\n")
-	s.printf("Everything else is an environment variable and applies after a restart.\r\n")
+	s.notef("\r\nRuntime keys: `settings set port <n>`, `settings set key <hex>`.")
+	s.notef("Everything else is an environment variable and applies after a restart.")
 }
 
 func cmdSettingsSet(s *consoleSession, args []string) {
@@ -1512,7 +1528,7 @@ func cmdSettingsSet(s *consoleSession, args []string) {
 			return
 		}
 		a.cfg.ListenPort = n
-		s.printf("listen port set to %d — restart required to apply\r\n", n)
+		s.printf("\x1b[32mlisten port set to %d\x1b[0m — restart required to apply\r\n", n)
 	case "key", "private-key":
 		if a.wg == nil {
 			s.errf("wireguard is not attached (mesh-only process)")
@@ -1552,11 +1568,11 @@ func cmdKey(s *consoleSession, args []string) {
 			s.printf("no API key yet — `key regenerate` creates one\r\n")
 			return
 		}
-		s.printf("API key    : %s\r\n", key)
+		s.printf("%s : %s\r\n", paint(ansiDim, "API key"), paint(ansiYellow, key))
 		if ts, ok := a.apiKey.CreatedAt(); ok {
-			s.printf("created    : %s\r\n", ts.Format(time.RFC3339))
+			s.printf("%s : %s\r\n", paint(ansiDim, "created"), ts.Format(time.RFC3339))
 		}
-		s.printf("use it as the X-API-Key header on /api requests\r\n")
+		s.notef("use it as the X-API-Key header on /api requests")
 	case "server":
 		if a.wg == nil {
 			s.errf("wireguard is not attached (mesh-only process)")
@@ -1567,13 +1583,13 @@ func cmdKey(s *consoleSession, args []string) {
 			s.errf("server key not initialized")
 			return
 		}
-		s.printf("server public key : %s\r\n", pub)
-		s.printf("listen port       : %d\r\n", a.cfg.ListenPort)
-		s.printf("endpoint          : %s:%d\r\n", a.cfg.APIListen, a.cfg.ListenPort)
+		s.printf("%s : %s\r\n", paint(ansiDim, "server public key"), pub)
+		s.printf("%s : %d\r\n", paint(ansiDim, "listen port"), a.cfg.ListenPort)
+		s.printf("%s : %s:%d\r\n", paint(ansiDim, "endpoint"), a.cfg.APIListen, a.cfg.ListenPort)
 	case "regenerate":
 		s.confirm("Regenerate the API key? Existing API clients stop working [y/N]: ", func(yes bool) {
 			if !yes {
-				s.printf("cancelled\r\n")
+				s.printf("%s\r\n", paint(ansiDim, "cancelled"))
 				return
 			}
 			key, err := a.apiKey.Generate()
@@ -1581,8 +1597,8 @@ func cmdKey(s *consoleSession, args []string) {
 				s.errf("generate API key: %s", err)
 				return
 			}
-			s.printf("new API key: %s\r\n", key)
-			s.printf("store it now — it is shown only once here\r\n")
+			s.printf("\x1b[32mnew API key:\x1b[0m %s\r\n", paint(ansiYellow, key))
+			s.notef("store it now — it is shown only once here")
 		})
 	default:
 		s.errf("usage: %s", lookupCommand("key").usage)
@@ -1617,7 +1633,7 @@ func cmdPassword(s *consoleSession, _ []string) {
 					s.errf("save credentials: %s", err)
 					return
 				}
-				s.printf("login updated for %q — dashboard and ssh gateway both use it\r\n", user)
+				s.printf("\x1b[32mlogin updated for %q\x1b[0m — dashboard and ssh gateway both use it\r\n", user)
 			})
 		})
 	})
@@ -1656,7 +1672,7 @@ func cmdBackup(s *consoleSession, args []string) {
 		if info != nil {
 			size = info.Size()
 		}
-		s.printf("backup written to %s (%s)\r\n", args[0], humanBytes(size))
+		s.printf("\x1b[32mbackup written to %s\x1b[0m (%s)\r\n", args[0], humanBytes(size))
 	case "import":
 		if len(args) != 1 {
 			s.errf("usage: backup import <file>")
@@ -1669,7 +1685,7 @@ func cmdBackup(s *consoleSession, args []string) {
 		}
 		s.confirm(fmt.Sprintf("Restore %s? Peers, groups, keys and credentials are replaced [y/N]: ", path), func(yes bool) {
 			if !yes {
-				s.printf("restore cancelled\r\n")
+				s.printf("%s\r\n", paint(ansiDim, "restore cancelled"))
 				return
 			}
 			// Open only now: the question sits between dispatch and this
@@ -1685,7 +1701,7 @@ func cmdBackup(s *consoleSession, args []string) {
 				s.errf("%s", err)
 				return
 			}
-			s.printf("restored from %s: %v peer(s), server key %s\r\n",
+			s.printf("\x1b[32mrestored from %s\x1b[0m: %v peer(s), server key %s\r\n",
 				path, summary["peer_count"], orDash(fmt.Sprint(summary["server_public_key"])))
 		})
 	default:
@@ -1718,12 +1734,12 @@ func cmdUpdate(s *consoleSession, args []string) {
 			return
 		}
 		if avail {
-			s.printf("update available: v%s (running v%s)\r\n", latest, config.Version)
+			s.printf("\x1b[33mupdate available:\x1b[0m v%s (running v%s)\r\n", latest, config.Version)
 		} else {
-			s.printf("up to date: v%s is the latest release\r\n", config.Version)
+			s.printf("\x1b[32mup to date:\x1b[0m v%s is the latest release\r\n", config.Version)
 		}
 		if releaseURL != "" {
-			s.printf("release: %s\r\n", releaseURL)
+			s.printf("%s %s\r\n", paint(ansiDim, "release:"), paint(ansiCyan, releaseURL))
 		}
 		if notes != "" {
 			s.printf("\r\n%s\r\n", toCRLF(truncateLines(notes, 12)))
@@ -1744,7 +1760,7 @@ func cmdUpdate(s *consoleSession, args []string) {
 		}
 		s.confirm(fmt.Sprintf("Install v%s? The server restarts [y/N]: ", latest), func(yes bool) {
 			if !yes {
-				s.printf("cancelled\r\n")
+				s.printf("%s\r\n", paint(ansiDim, "cancelled"))
 				return
 			}
 			if err := a.installUpdate(url); err != nil {
@@ -1764,16 +1780,16 @@ func cmdVersion(s *consoleSession, args []string) {
 	if hasFlag(args, "--refresh") {
 		a.checkGitHubRelease()
 	}
-	s.printf("TunGuard %s (%s)\r\n", config.Version, goArch())
+	s.printf("%s %s %s\r\n", paint(ansiBoldCyan, "TunGuard"), paint(ansiBold, config.Version), paint(ansiDim, "("+goArch()+")"))
 	versionCache.mu.RLock()
 	latest := versionCache.latestVersion
 	avail := versionCache.updateAvailable
 	versionCache.mu.RUnlock()
 	if latest != "" {
 		if avail {
-			s.printf("update available: v%s — `update install` applies it\r\n", latest)
+			s.printf("\x1b[33mupdate available:\x1b[0m v%s — `update install` applies it\r\n", latest)
 		} else {
-			s.printf("up to date with v%s\r\n", latest)
+			s.printf("\x1b[32mup to date with v%s\x1b[0m\r\n", latest)
 		}
 	}
 }
@@ -1782,11 +1798,12 @@ func cmdJump(s *consoleSession, _ []string) {
 	a := s.api
 	s.printf("This server is an ssh jump host: any TCP target it can reach is one\r\n")
 	s.printf("ProxyJump away, using the same login as the dashboard:\r\n\r\n")
-	s.printf("  \x1b[1mssh -J %s@%s user@target\x1b[0m\r\n\r\n", s.user, jumpAddr(a.cfg))
+	s.printf("  %s\r\n\r\n", paint(ansiBoldCyan, fmt.Sprintf("ssh -J %s@%s user@target", s.user, jumpAddr(a.cfg))))
 	s.printf("Example through the mesh:\r\n\r\n")
-	s.printf("  \x1b[1mssh -J %s@%s root@10.100.0.5\x1b[0m\r\n\r\n", s.user, jumpAddr(a.cfg))
-	s.printf("Direct sessions to WireGuard peers work too — no -J needed:\r\n\r\n")
-	s.printf("  \x1b[1mssh user@10.100.0.5\x1b[0m\r\n")
+	s.printf("  %s\r\n\r\n", paint(ansiBoldCyan, fmt.Sprintf("ssh -J %s@%s root@10.100.0.5", s.user, jumpAddr(a.cfg))))
+	s.printf("Or open a session to a peer right from this terminal:\r\n\r\n")
+	s.printf("  %s\r\n\r\n", paint(ansiBoldCyan, "ssh root@10.100.0.5"))
+	s.printf("Direct sessions to WireGuard peers work too — no -J needed.\r\n")
 }
 
 // ─── completions ─────────────────────────────────────────────────────────
@@ -2047,9 +2064,9 @@ func ruleFlags(g *policy.PolicyGroup) string {
 	var b strings.Builder
 	for _, on := range []bool{g.AllowInterDevice, g.AllowP2PMesh, g.AllowTRP, g.AllowWGAccess} {
 		if on {
-			b.WriteString("y ")
+			b.WriteString(paint(ansiGreen, "y") + " ")
 		} else {
-			b.WriteString("n ")
+			b.WriteString(paint(ansiRed, "n") + " ")
 		}
 	}
 	return strings.TrimSpace(b.String())

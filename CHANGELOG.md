@@ -5,6 +5,23 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.6] - 2026-10-09
+
+### Added
+
+- **Built-in `ssh` client.** The Terminal and SSH gateway prompt can now open
+  sessions to WireGuard peers (by device label or tunnel address) or any host
+  the server can reach — `ssh [-p port] [-l user] [-i key] [--password pass]
+  [user@]host[:port] [command]`, with key and password auth, interactive PTYs
+  with live resize, one-shot remote commands and remote exit status. `Ctrl-]`
+  detaches from an interactive session.
+- **Interactive foreground jobs and terminal sizing.** Foreground jobs can now
+  receive keystrokes from the console, and the server tracks the client's
+  terminal size from WebSocket `resize` messages and SSH `pty-req` /
+  `window-change` requests.
+- **Full color theme** for CLI output: prompts, status tables, peer/mesh/TRP
+  states, policy rule flags and success/error messages.
+
 ## [2.4.5] - 2026-10-08
 
 ### Added

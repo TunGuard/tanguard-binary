@@ -89,7 +89,7 @@ func (a *API) handleWebConsole(w http.ResponseWriter, r *http.Request) {
 				inW.Write([]byte(msg.Data))
 			}
 		case "resize":
-			sess.SetCols(msg.Cols)
+			sess.SetSize(msg.Cols, msg.Rows)
 		}
 	}
 }

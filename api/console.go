@@ -30,10 +30,15 @@ const fgEOFGrace = 300 * time.Millisecond
 // fgJob is a command or streaming loop that owns the terminal until it ends:
 // `ping`, `logs -f` and friends. done closes when the job has fully finished
 // and every byte of its output has been written.
+//
+// write, when set, marks an interactive job (an `ssh` session): raw keystrokes
+// are handed to it instead of being dropped, and the end of the input side does
+// not end the job — the remote side decides when the session is over.
 type fgJob struct {
-	cmd  *exec.Cmd
-	stop func()
-	done chan struct{}
+	cmd   *exec.Cmd
+	stop  func()
+	done  chan struct{}
+	write func([]byte)
 }
 
 type consoleSession struct {
@@ -54,6 +59,13 @@ type consoleSession struct {
 	exitCode   int
 	shouldExit bool
 	fg         *fgJob
+
+	// cols/rows are the remote terminal size, pushed in by the ssh gateway's
+	// pty-req/window-change and the dashboard's resize messages. They size the
+	// PTY of any `ssh` session the CLI opens in turn.
+	sizeMu sync.Mutex
+	cols   int
+	rows   int
 
 	// The input pump reads `in` once, in its own goroutine, and queues
 	// keystrokes for whoever is listening. eof latches so a reader that has
@@ -77,6 +89,8 @@ func newConsoleSession(api *API, user string, in io.Reader, out io.Writer) *cons
 		hostname: os.Getenv("HOSTNAME"),
 		byteCh:   make(chan byteEv, 4096),
 		pumpStop: make(chan struct{}),
+		cols:     80,
+		rows:     24,
 	}
 	if s.hostname == "" {
 		if hn, _ := os.Hostname(); hn != "" {
@@ -114,7 +128,36 @@ func (s *consoleSession) Close() {
 	}
 }
 
-func (s *consoleSession) SetCols(cols int) {}
+// SetCols records the terminal width. It keeps the current height, which is
+// what a pty-req that omits rows still needs.
+func (s *consoleSession) SetCols(cols int) { s.SetSize(cols, 0) }
+
+// SetSize records the terminal geometry. Zero or negative values are ignored so
+// a partial update never blanks a known dimension.
+func (s *consoleSession) SetSize(cols, rows int) {
+	s.sizeMu.Lock()
+	if cols > 0 {
+		s.cols = cols
+	}
+	if rows > 0 {
+		s.rows = rows
+	}
+	s.sizeMu.Unlock()
+}
+
+// size returns the current geometry, falling back to a sane 80x24.
+func (s *consoleSession) size() (int, int) {
+	s.sizeMu.Lock()
+	defer s.sizeMu.Unlock()
+	cols, rows := s.cols, s.rows
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+	return cols, rows
+}
 
 func (s *consoleSession) foreground() *fgJob { return s.fg }
 
@@ -251,10 +294,27 @@ func (s *consoleSession) startForeground(stop func(), body func()) {
 	s.fg = nil
 }
 
+// startInteractiveJob runs a job that owns the keyboard as well as the screen —
+// an `ssh` session. Every keystroke is handed to write, Ctrl-] detaches, and
+// the job ends when body returns (the remote closed the connection).
+func (s *consoleSession) startInteractiveJob(stop func(), write func([]byte), body func()) {
+	done := make(chan struct{})
+	job := &fgJob{stop: stop, done: done, write: write}
+	s.fg = job
+	go func() {
+		defer close(done)
+		body()
+	}()
+	s.watchForeground(job)
+	<-job.done
+	s.fg = nil
+}
+
 // watchForeground keeps the session alive while a job runs: it consumes
 // input so nothing queues up behind the job, Ctrl-C stops the job, and the
 // end of input stops it too — external processes first get a brief grace
-// period to flush their own output.
+// period to flush their own output. An interactive job receives the raw
+// keystrokes instead, and only Ctrl-] detaches it.
 func (s *consoleSession) watchForeground(job *fgJob) {
 	s.startPump()
 	input := s.byteCh
@@ -274,11 +334,23 @@ func (s *consoleSession) watchForeground(job *fgJob) {
 			if ev.err != nil {
 				input = nil // the input side is gone; stop selecting on it
 				s.markEOF()
-				if job.cmd != nil {
+				if job.write != nil {
+					// Interactive: the remote side owns the session's life,
+					// so a local end-of-input must not tear it down.
+				} else if job.cmd != nil {
 					grace = time.After(fgEOFGrace)
 				} else {
 					job.stop()
 				}
+				continue
+			}
+			if job.write != nil {
+				if ev.b == 0x1d { // Ctrl-]: detach from the interactive session
+					s.printf("\r\n\x1b[2m[detached]\x1b[0m\r\n")
+					job.stop()
+					continue
+				}
+				job.write([]byte{ev.b})
 				continue
 			}
 			if ev.b == 0x03 { // Ctrl-C
@@ -314,16 +386,22 @@ func (w *crlfWriter) Write(p []byte) (int, error) {
 // ─── session lifecycle ───────────────────────────────────────────────────
 
 func (s *consoleSession) welcome() {
-	s.printf(" _                                              _ \r\n")
-	s.printf("\r\n")
-	s.printf(" | |                                            | |\r\n")
-	s.printf(" | |_  _   _  _ __   __ _  _   _   ____  _ __  __| |\r\n")
-	s.printf(" | __|| | | || '_ \\ / _` || | | | / _  || '__|/ _` |\r\n")
-	s.printf(" | |_ | |_| || | | | (_| || |_| || (_| || |  | (_| |\r\n")
-	s.printf("  \\__| \\__,_||_| |_|\\__, | \\__,_| \\__,_||_|   \\__,_|\r\n")
-	s.printf("                     __/ |                          \r\n")
-	s.printf("                    |___/                           \r\n")
-	s.printf(" ---------------------------------------------------\r\n")
+	art := []string{
+		" _                                              _ ",
+		"",
+		" | |                                            | |",
+		" | |_  _   _  _ __   __ _  _   _   ____  _ __  __| |",
+		" | __|| | | || '_ \\ / _` || | | | / _  || '__|/ _` |",
+		" | |_ | |_| || | | | (_| || |_| || (_| || |  | (_| |",
+		"  \\__| \\__,_||_| |_|\\__, | \\__,_| \\__,_||_|   \\__,_|",
+		"                     __/ |                          ",
+		"                    |___/                           ",
+	}
+	for _, line := range art {
+		s.printf("%s%s%s\r\n", ansiBoldCyan, line, ansiReset)
+	}
+	s.printf("%s%s%s\r\n", ansiBoldCyan, " ---------------------------------------------------", ansiReset)
+
 	hub, relay := "Offline", "Idle"
 	control, relayListen := "-", "-"
 	if s.api.hub != nil {
@@ -337,18 +415,18 @@ func (s *consoleSession) welcome() {
 			}
 		}
 	}
-	s.printf("  TunGuard OS %s      (Built-in Userspace)\r\n", config.Version)
-	s.printf("  Control Plane Hub     :       %s [%s]\r\n", hub, control)
-	s.printf("  P2P/TRP Mesh Relay    :       %s [%s]\r\n", relay, relayListen)
-	s.printf(" ---------------------------------------------------\r\n")
+	s.printf("  \x1b[1;32mTunGuard OS\x1b[0m %s      (Built-in Userspace)\r\n", config.Version)
+	s.printf("  \x1b[2mControl Plane Hub    \x1b[0m :       %s [%s]\r\n", state(strings.ToLower(hub)), control)
+	s.printf("  \x1b[2mP2P/TRP Mesh Relay   \x1b[0m :       %s [%s]\r\n", state(strings.ToLower(relay)), relayListen)
+	s.printf("%s%s%s\r\n", ansiBoldCyan, " ---------------------------------------------------", ansiReset)
 	s.printf("\r\n")
-	s.printf(" Welcome %s. Core engine operational.\r\n", s.user)
+	s.printf(" Welcome \x1b[1;36m%s\x1b[0m. \x1b[32mCore engine operational.\x1b[0m\r\n", s.user)
 	s.printf("\r\n")
-	s.printf(" * Type 'help' to review edge policy & mesh commands.\r\n")
-	s.printf(" * Type 'exit' to terminate control session safely.\r\n")
+	s.printf(" * Type \x1b[1;33mhelp\x1b[0m to review edge policy & mesh commands.\r\n")
+	s.printf(" * Type \x1b[1;33mexit\x1b[0m to terminate control session safely.\r\n")
 	s.printf("\r\n")
-	s.printf(" [Jump Routing Command]:\r\n")
-	s.printf(" $ ssh -J %s@%s user@target\r\n\r\n", s.user, jumpAddr(s.api.cfg))
+	s.printf(" \x1b[2m[Jump Routing Command]:\x1b[0m\r\n")
+	s.printf(" $ %s\r\n\r\n", paint(ansiBoldCyan, fmt.Sprintf("ssh -J %s@%s user@target", s.user, jumpAddr(s.api.cfg))))
 }
 
 // promptString is the text a line edit repaints against: the shell prompt
@@ -361,7 +439,7 @@ func (s *consoleSession) promptString() string {
 		}
 		return s.askPrompt
 	}
-	return fmt.Sprintf("%s@%s:~$ ", s.user, s.hostname)
+	return fmt.Sprintf("\x1b[1;32m%s\x1b[0m@\x1b[1;36m%s\x1b[0m:\x1b[1;34m~\x1b[0m$ ", s.user, s.hostname)
 }
 
 // ask installs a one-shot question. The prompt is printed exactly once,
@@ -376,7 +454,7 @@ func (s *consoleSession) ask(prompt string, hidden bool, fn func(string)) {
 
 // confirm asks a y/N question and hands the verdict to fn.
 func (s *consoleSession) confirm(prompt string, fn func(bool)) {
-	s.ask(prompt, false, func(line string) {
+	s.ask(paint(ansiYellow, prompt), false, func(line string) {
 		v := strings.ToLower(strings.TrimSpace(line))
 		fn(v == "y" || v == "yes")
 	})
@@ -650,7 +728,7 @@ func (s *consoleSession) redraw() {
 	}
 	prompt := s.promptString()
 	s.printf("\r%s%s\x1b[0K", prompt, string(s.line))
-	s.printf("\x1b[%dG", len([]rune(prompt))+s.cursor+1)
+	s.printf("\x1b[%dG", visibleWidth(prompt)+s.cursor+1)
 }
 
 // redrawEnd paints the full line one last time at the left margin so the
@@ -772,7 +850,7 @@ func jumpAddr(cfg *config.Config) string {
 
 func (s *consoleSession) table(header []string, rows [][]string) {
 	for i, h := range header {
-		s.printf("%s", h)
+		s.printf("%s", paint(ansiBoldCyan, h))
 		if i < len(header)-1 {
 			s.printf("\t")
 		}

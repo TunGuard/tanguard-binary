@@ -207,13 +207,13 @@ func (g *SSHGateway) handleSessionChannel(newChannel ssh.NewChannel, user string
 			case "pty-req":
 				var p sshPTYRequest
 				if err := ssh.Unmarshal(req.Payload, &p); err == nil {
-					sess.SetCols(int(p.Cols))
+					sess.SetSize(int(p.Cols), int(p.Rows))
 				}
 				req.Reply(true, nil)
 			case "window-change":
 				var w sshWindowChange
 				if err := ssh.Unmarshal(req.Payload, &w); err == nil {
-					sess.SetCols(int(w.Cols))
+					sess.SetSize(int(w.Cols), int(w.Rows))
 				}
 				if req.WantReply {
 					req.Reply(true, nil)

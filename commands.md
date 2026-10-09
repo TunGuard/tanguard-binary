@@ -38,6 +38,7 @@ help peer            # usage for one command
 | `Ctrl-L` | clear screen |
 | `Ctrl-C` | cancel line, cancel a prompt, or stop a running tool / `logs -f` |
 | `Ctrl-D` | exit, or cancel the current prompt |
+| `Ctrl-]` | detach from an interactive `ssh` session |
 
 ## Status and server
 
@@ -46,8 +47,29 @@ status                  # server, tunnel, mesh and policy overview
 version                 # running version + cached update state
 version --refresh       # ask GitHub for the latest release
 jump                    # print the ssh -J line for this server
+ssh <host> [command]    # open an ssh session to a device from here
 clear                   # clear the screen
 ```
+
+## SSH client
+
+The terminal is a small ssh client, so you can log in to a WireGuard peer — or
+any host this server can reach — without leaving the dashboard. Peers can be
+named by their device label or tunnel address; a password is asked for when no
+key matches.
+
+```bash
+ssh root@10.100.0.5                 # interactive session to a peer
+ssh laptop                          # a peer by its device label
+ssh -p 2222 -l alice jumpbox        # alternate port / login
+ssh -i ~/.ssh/id_ed25519 host       # use a specific private key
+ssh host uptime                     # run one remote command and exit
+ssh --password s3cret host          # non-interactive password (scripts)
+```
+
+While an interactive session is open, `Ctrl-]` detaches and returns to the
+TunGuard prompt; typing `exit` on the remote host closes the connection cleanly.
+`ssh host command` streams the remote output and reports the remote exit status.
 
 ## System logs
 

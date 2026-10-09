@@ -240,6 +240,16 @@ The SSH gateway authenticates with the **same login as the web dashboard** — i
 
 You can also SSH directly from the web dashboard — click the **SSH** button next to any online peer to open a browser terminal.
 
+The dashboard **Terminal** (and the SSH gateway prompt itself) has a built-in `ssh` client, so you can reach peers or any host the server can reach without a second terminal:
+
+```text
+ssh root@10.100.0.2        # interactive session to a peer
+ssh laptop                 # a peer by its device label
+ssh host uptime            # run one command and exit
+```
+
+`Ctrl-]` detaches an interactive session and returns to the TunGuard prompt. See [commands.md](commands.md#ssh-client) for the full option set.
+
 ## Running as a systemd Service
 
 ```bash
