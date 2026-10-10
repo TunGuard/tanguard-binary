@@ -5,6 +5,21 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.7] - 2026-10-10
+
+### Added
+
+- **Domain mapping with automatic HTTPS.** A public domain can now be mapped
+  to an existing TRP port mapping or to a service reachable over the
+  WireGuard tunnel, and TunGuard terminates TLS with a Let's Encrypt
+  certificate obtained over HTTP-01. When nginx, Apache, Caddy or Traefik is
+  detected the route is written into that server's config and reloaded;
+  otherwise a built-in reverse proxy listens on ports 80/443. Managed by
+  `domain list|add|update|remove` in the console, `GET /api/domains`,
+  `POST /api/domain/add|update|remove`, and a new **Domains** WebUI page.
+  Enabled with `DOMAIN_ENABLED=true`; ports are configurable with
+  `DOMAIN_HTTP_PORT`, `DOMAIN_HTTPS_PORT` and `DOMAIN_CHALLENGE_PORT`.
+
 ## [2.4.6] - 2026-10-09
 
 ### Added

@@ -18,6 +18,7 @@ import (
 
 	"tanguard/auth"
 	"tanguard/config"
+	"tanguard/domain"
 	"tanguard/p2p"
 	"tanguard/peers"
 	"tanguard/policy"
@@ -39,6 +40,7 @@ type API struct {
 	// TRP routes need the manager, so both are attached together.
 	hub  *p2p.MeshHub
 	trp  *trp.TRPManager
+	dom  *domain.Manager
 	ipMu sync.Mutex
 }
 
@@ -71,6 +73,49 @@ func (a *API) SetMesh(hub *p2p.MeshHub, trpMgr *trp.TRPManager) {
 	}
 	a.hub = hub
 	a.trp = trpMgr
+}
+
+// SetDomain attaches the domain reverse-proxy manager. Passing a non-nil
+// manager also installs the TRP lookup so `--trp` backends resolve to the
+// loopback port a TRP mapping listens on.
+func (a *API) SetDomain(dom *domain.Manager) {
+	if a == nil {
+		return
+	}
+	a.dom = dom
+	if a.dom != nil && a.trp != nil {
+		a.dom.SetTRPLookup(a.trpLookup)
+	}
+}
+
+// trpLookup resolves a TRP mapping reference (full id or unique id prefix) to
+// the local address the mapping listens on. A domain proxies to that address,
+// which the TRP manager then forwards through the tunnel to the node.
+func (a *API) trpLookup(ref string) (addr, desc string, ok bool) {
+	if a.trp == nil {
+		return "", "", false
+	}
+	ref = strings.TrimSpace(ref)
+	var match map[string]interface{}
+	for _, p := range a.trp.ListProxies() {
+		id := fmt.Sprint(p["id"])
+		if id == ref {
+			match = p
+			break
+		}
+		if strings.HasPrefix(strings.ToLower(id), strings.ToLower(ref)) {
+			if match != nil {
+				return "", "", false // ambiguous prefix
+			}
+			match = p
+		}
+	}
+	if match == nil {
+		return "", "", false
+	}
+	addr = net.JoinHostPort("127.0.0.1", fmt.Sprint(match["bind_port"]))
+	node := orDashStr(match["node_name"], match["node_id"])
+	return addr, fmt.Sprintf("TRP mapping %s (%s) on :%v", fmt.Sprint(match["id"]), node, match["bind_port"]), true
 }
 
 func (a *API) Start() {
@@ -119,6 +164,7 @@ func (a *API) Start() {
 	}
 	registerMeshRoutes(mux, a)
 	registerPolicyRoutes(mux, a)
+	registerDomainRoutes(mux, a)
 
 	handler := corsMiddleware(logMiddleware(mux))
 

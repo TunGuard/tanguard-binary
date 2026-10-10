@@ -137,6 +137,14 @@ func buildCommands() []*cliCommand {
 			complete: completeTRP,
 		},
 		{
+			name:     "domain",
+			subs:     []string{"list", "add", "update", "remove"},
+			usage:    "domain list | domain add <domain> --trp <ref> | --wg <ip> <port> [--disable] | domain update <ref> [--domain name] [--enable|--disable] [--trp <ref>|--wg <ip> <port>] | domain remove <ref>",
+			desc:     "map a domain to a TRP mapping or a WireGuard service (auto HTTPS)",
+			run:      cmdDomain,
+			complete: completeDomain,
+		},
+		{
 			name:     "policy",
 			subs:     []string{"list", "show", "create", "update", "delete", "assign", "unassign", "export", "apply"},
 			usage:    "policy list | show <group> | create <name> [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off] | update <group> [--name n] [--inter on|off] … | delete <group> | assign <group> <device…> | unassign <device…> | export <file> | apply <file>",

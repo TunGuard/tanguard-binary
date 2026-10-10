@@ -262,6 +262,7 @@ const WIN_DEFS = {
   peers:     { title: 'Peers',            icon: 'fa-users',           href: 'peers.html' },
   p2p:       { title: 'P2P Mesh',         icon: 'fa-diagram-project', href: 'p2p.html' },
   trp:       { title: 'TRP Port Mapping', icon: 'fa-route',           href: 'trp.html' },
+  domains:   { title: 'Domains',           icon: 'fa-globe',           href: 'domains.html' },
   policy:    { title: 'Policy Groups',    icon: 'fa-shield-halved',   href: 'policy.html' },
   terminal:  { title: 'Terminal',         icon: 'fa-terminal',        href: 'terminal.html' },
   systemlogs:{ title: 'System Logs',      icon: 'fa-file-lines',      href: 'systemlogs.html' },

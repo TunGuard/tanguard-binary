@@ -7,4 +7,4 @@ package config
 // so a tagged release reports its own version. Hardcoding it meant every
 // release claimed to be the same build, and the dashboard offered an update
 // that could never be installed.
-var Version = "2.4.6"
+var Version = "2.4.7"

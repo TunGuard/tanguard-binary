@@ -12,6 +12,7 @@ import (
 	"tanguard/api"
 	"tanguard/auth"
 	"tanguard/config"
+	"tanguard/domain"
 	"tanguard/p2p"
 	"tanguard/peers"
 	"tanguard/policy"
@@ -125,6 +126,21 @@ func startMesh(cfg *config.Config, policies *policy.PolicyStore, store *peers.Pe
 	return hub, trpMgr
 }
 
+// startDomain boots the domain reverse proxy when enabled. It loads the
+// persisted mappings, then brings up the serving side (built-in proxy or
+// external webserver config) so domains answer right away.
+func startDomain(cfg *config.Config) *domain.Manager {
+	if !cfg.DomainEnabled {
+		return nil
+	}
+	dm := domain.NewManager(cfg)
+	if err := dm.Load(); err != nil {
+		log.Printf("[main] WARNING: could not load domain mappings: %v", err)
+	}
+	dm.Start()
+	return dm
+}
+
 // logDashboard reports where the dashboard is and which login to use.
 func logDashboard(cfg *config.Config, creds *auth.CredentialStore) {
 	user := cfg.WebUsername
@@ -156,6 +172,7 @@ func runMeshOnly(cfg *config.Config) {
 	apiSrv := api.NewAPI(nil, store, cfg, creds, apiKeys, nil)
 	apiSrv.SetPolicy(policies)
 	apiSrv.SetMesh(hub, trpMgr)
+	apiSrv.SetDomain(startDomain(cfg))
 	go apiSrv.Start()
 	logDashboard(cfg, creds)
 
@@ -262,6 +279,7 @@ func main() {
 	apiSrv := api.NewAPI(wgSrv, store, cfg, creds, apiKeys, monitor)
 	apiSrv.SetPolicy(policies)
 	apiSrv.SetMesh(hub, trpMgr)
+	apiSrv.SetDomain(startDomain(cfg))
 	go apiSrv.Start()
 
 	if cfg.WebEnabled {

@@ -28,6 +28,17 @@ type Config struct {
 
 	TLSCertFile string
 	TLSKeyFile  string
+
+	// Domain reverse proxy: public domain names in front of local services,
+	// served by this process directly (built-in proxy) or written into the
+	// machine's webserver. DomainHTTPPort/DomainHTTPSPort are the built-in
+	// proxy's ports; DomainChallengePort is the loopback port the ACME
+	// http-01 challenge is answered on when an external webserver proxies
+	// /.well-known/acme-challenge/ to this process.
+	DomainEnabled       bool
+	DomainHTTPPort      int
+	DomainHTTPSPort     int
+	DomainChallengePort int
 }
 
 // LoadConfig builds the server configuration from the environment, applying the
@@ -56,6 +67,11 @@ func LoadConfig() *Config {
 
 		TLSCertFile: EnvStr("TLS_CERT_FILE", ""),
 		TLSKeyFile:  EnvStr("TLS_KEY_FILE", ""),
+
+		DomainEnabled:       EnvStr("DOMAIN_ENABLED", "false") == "true",
+		DomainHTTPPort:      EnvInt("DOMAIN_HTTP_PORT", 80),
+		DomainHTTPSPort:     EnvInt("DOMAIN_HTTPS_PORT", 443),
+		DomainChallengePort: EnvInt("DOMAIN_CHALLENGE_PORT", 8100),
 	}
 }
 

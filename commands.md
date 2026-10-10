@@ -169,6 +169,24 @@ trp add phone 8080 192.168.1.10 80 --bind 10.100.0.1   # only on that address
 trp remove 3                                    # by id or bind-address:port
 ```
 
+## Domains (HTTPS reverse proxy)
+
+```bash
+domain list                                     # mappings: domain, backend, target, state
+domain add app.example.com --trp 3              # behind an existing TRP mapping
+domain add api.example.com --wg 10.100.0.2 8080 # behind a tunneled service
+domain update app.example.com --disable         # pause without deleting
+domain update app.example.com --domain new.example.com
+domain remove app.example.com                   # by id or domain name
+```
+
+The domain points at this server; TunGuard terminates TLS with a Let's
+Encrypt certificate and proxies to the backend. If nginx, Apache, Caddy or
+Traefik is detected, the route is written into that server and reloaded;
+otherwise the built-in proxy listens on ports 80/443. Requires
+`DOMAIN_ENABLED=true`; ports are configurable with `DOMAIN_HTTP_PORT`,
+`DOMAIN_HTTPS_PORT` and `DOMAIN_CHALLENGE_PORT`.
+
 ## Policy groups
 
 ```bash

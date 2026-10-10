@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TunGuard - TRP</title>
+<title>TunGuard - Domains</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link rel="stylesheet" href="style.css">
 <script>try{if(localStorage.getItem('tg-theme')==='light')document.documentElement.classList.add('light')}catch(e){}</script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.classList.add('embed')</script>
 </head>
-<body data-page="trp">
+<body data-page="domains">
 <div class="app-shell">
 
 <aside class="sidebar" id="sidebar">
@@ -27,30 +27,31 @@
     <a href="index.html" class="nav-item">
       <span class="nav-icon"><i class="fa-solid fa-gauge"></i></span>
       <span class="nav-label">Dashboard</span>
-      <span class="nav-badge" id="nav-peer-count" style="display:none">0</span>
     </a>
     <a href="peers.html" class="nav-item">
       <span class="nav-icon"><i class="fa-solid fa-users"></i></span>
       <span class="nav-label">Peers</span>
+      <span class="nav-badge" id="nav-peer-count" style="display:none">0</span>
     </a>
     <a href="p2p.html" class="nav-item">
       <span class="nav-icon"><i class="fa-solid fa-diagram-project"></i></span>
       <span class="nav-label">P2P</span>
       <span class="nav-badge" id="nav-p2p-count" style="display:none">0</span>
     </a>
-    <a href="trp.html" class="nav-item active">
+    <a href="trp.html" class="nav-item">
       <span class="nav-icon"><i class="fa-solid fa-route"></i></span>
       <span class="nav-label">TRP</span>
       <span class="nav-badge" id="nav-trp-count" style="display:none">0</span>
+    </a>
+    <a href="domains.html" class="nav-item active">
+      <span class="nav-icon"><i class="fa-solid fa-globe"></i></span>
+      <span class="nav-label">Domains</span>
+      <span class="nav-badge" id="nav-domain-count" style="display:none">0</span>
     </a>
     <a href="policy.html" class="nav-item">
       <span class="nav-icon"><i class="fa-solid fa-shield-halved"></i></span>
       <span class="nav-label">Policy Groups</span>
       <span class="nav-badge" id="nav-policy-count" style="display:none">0</span>
-    </a>
-    <a href="domains.html" class="nav-item">
-      <span class="nav-icon"><i class="fa-solid fa-globe"></i></span>
-      <span class="nav-label">Domains</span>
     </a>
     <div class="nav-section-label">System</div>
     <a href="systemlogs.html" class="nav-item">
@@ -91,7 +92,7 @@
       <span class="brand-name">TUNGUARD</span>
     </div>
     <span class="topbar-sep"></span>
-    <div class="topbar-title">TRP Port Mapping</div>
+    <div class="topbar-title">Domain Mapping</div>
     <div class="topbar-actions">
       <button class="theme-toggle" id="themeToggleBtn" type="button" onclick="toggleTheme()" title="Toggle light / dark theme">
         <svg class="ico-sun" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
@@ -109,50 +110,19 @@
 
     <div class="page-header">
       <div class="page-header-left">
-        <h1 class="page-title">TRP Port Mapping</h1>
-        <p class="page-subtitle">Expose a service running on a device as a port on this server</p>
+        <h1 class="page-title">Domain Mapping</h1>
+        <p class="page-subtitle">Put a domain name in front of a service that is reachable from this server, with automatic HTTPS</p>
       </div>
       <div class="page-header-actions">
-        <span class="chip info"><span class="chip-dot"></span><span id="trp-count">0</span> mappings</span>
-        <button class="btn btn-secondary" onclick="loadTRP()">
+        <span class="chip info" id="domain-mode-chip"><span class="chip-dot"></span><span id="domain-mode">detecting…</span></span>
+        <button class="btn btn-secondary" onclick="loadDomains()">
           <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
           Refresh
         </button>
-        <button class="btn btn-primary" onclick="openTRP()">
+        <button class="btn btn-primary" onclick="openDomain()">
           <svg viewBox="0 0 24 24"><path d="M13 7h-2v4H7v2h4v4h2v-4h4v-2h-4V7zm-1-5C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
-          Add Mapping
+          Add Domain
         </button>
-      </div>
-    </div>
-
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-card-label">Mappings</span>
-          <span class="stat-icon blue"><svg viewBox="0 0 24 24"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 5c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 5h16v11H4V5zm8 8.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 4.5 12 4.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5z"/></svg></span>
-        </div>
-        <div class="stat-value" id="stat-mappings">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-card-label">Active connections</span>
-          <span class="stat-icon green"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
-        </div>
-        <div class="stat-value" id="stat-conns">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-card-label">Devices online</span>
-          <span class="stat-icon teal"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1z"/></svg></span>
-        </div>
-        <div class="stat-value" id="stat-devices">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-card-label">Reachable at</span>
-          <span class="stat-icon orange"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/><path d="M12 6v6l4 2 1-1.73-3-1.27V6h-2z"/></svg></span>
-        </div>
-        <div class="stat-value" id="stat-host">—</div>
       </div>
     </div>
 
@@ -160,7 +130,7 @@
       <div class="card-header">
         <div>
           <div class="card-title">How a mapping works</div>
-          <div class="card-subtitle">The server listens on the public port. On each connection it asks the device to open a socket to the local service, then pipes the two together.</div>
+          <div class="card-subtitle">The domain points at this server. Each request is proxied to the backend: an existing TRP port mapping, or a service reachable over the WireGuard tunnel.</div>
         </div>
         <div class="win-controls">
           <button class="win-btn" type="button" title="Collapse" onclick="toggleWinPanel(this)">&#8211;</button>
@@ -170,20 +140,20 @@
       <div class="card-body">
         <div class="flow">
           <div class="flow-step">
-            <div class="flow-step-label">Someone connects to</div>
-            <div class="flow-step-value" id="flow-public">server:4444</div>
+            <div class="flow-step-label">Someone visits</div>
+            <div class="flow-step-value" id="flow-public">https://app.example.com</div>
           </div>
           <div class="flow-arrow">
             <svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
           </div>
           <div class="flow-step">
-            <div class="flow-step-label">Server forwards over tun to</div>
-            <div class="flow-step-value" id="flow-target">device 127.0.0.1:8022</div>
+            <div class="flow-step-label">This server proxies to</div>
+            <div class="flow-step-value" id="flow-target">backend :port</div>
           </div>
         </div>
         <div class="alert alert-info" style="margin-top:16px;margin-bottom:0">
           <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-          The device must be online for a mapping to work, and the public port has to be allowed through the server firewall.
+          TLS certificates come from Let's Encrypt automatically. Point the domain's A/AAAA record at this server and make sure ports 80 and 443 reach it.
         </div>
       </div>
     </div>
@@ -192,7 +162,7 @@
       <div class="card-header">
         <div>
           <div class="card-title">Mappings</div>
-          <div class="card-subtitle">Each row is one server port bound to one service port on a device.</div>
+          <div class="card-subtitle">Each row is one public domain name backed by one local service.</div>
         </div>
         <div class="win-controls">
           <button class="win-btn" type="button" title="Collapse" onclick="toggleWinPanel(this)">&#8211;</button>
@@ -203,17 +173,16 @@
         <table>
           <thead>
             <tr>
-              <th>Public URL</th>
-              <th>Device</th>
+              <th>Domain</th>
+              <th>Backend</th>
               <th>Forwards to</th>
-              <th>Status</th>
-              <th>Conns</th>
+              <th>State</th>
               <th>Created</th>
               <th></th>
             </tr>
           </thead>
-          <tbody id="trp-tbody">
-            <tr><td colspan="7"><div class="empty-state"><span class="status-dot loading"></span>Loading mappings…</div></td></tr>
+          <tbody id="domain-tbody">
+            <tr><td colspan="6"><div class="empty-state"><span class="status-dot loading"></span>Loading domains…</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -223,48 +192,61 @@
 </main>
 </div>
 
-<div class="modal-overlay" id="trp-modal">
+<div class="modal-overlay" id="domain-modal">
   <div class="modal">
     <div class="modal-header">
-      <span class="modal-title">Add port mapping</span>
-      <span class="modal-close" onclick="closeTRP()">&times;</span>
+      <span class="modal-title" id="domain-modal-title">Add domain mapping</span>
+      <span class="modal-close" onclick="closeDomain()">&times;</span>
     </div>
     <div class="modal-body">
-      <div id="trp-error" class="alert alert-danger" style="display:none">
+      <div id="domain-error" class="alert alert-danger" style="display:none">
         <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-        <span id="trp-error-text"></span>
+        <span id="domain-error-text"></span>
       </div>
       <div class="form-group">
-        <label class="form-label">Device</label>
-        <select class="form-control" id="trp-node"></select>
-        <div class="form-hint">The device that runs the local service.</div>
+        <label class="form-label">Domain name</label>
+        <input type="text" class="form-control" id="dm-domain" placeholder="app.example.com" autocomplete="off">
+        <div class="form-hint">Bare domain name — no scheme, path or port.</div>
       </div>
-      <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Backend</label>
+        <select class="form-control" id="dm-backend" onchange="toggleBackendFields()">
+          <option value="trp">Existing TRP port mapping</option>
+          <option value="wg">WireGuard IP:port</option>
+        </select>
+      </div>
+      <div class="form-group" id="dm-trp-row">
+        <label class="form-label">TRP mapping</label>
+        <select class="form-control" id="dm-proxy"></select>
+        <div class="form-hint">The domain proxies to this mapping's port on this server.</div>
+      </div>
+      <div class="form-row" id="dm-wg-row" style="display:none">
         <div class="form-group">
-          <label class="form-label">Service port on the device</label>
-          <input type="number" class="form-control" id="trp-target-port" value="8022" min="1" max="65535">
-          <div class="form-hint">Where the service already listens.</div>
+          <label class="form-label">IP address</label>
+          <input type="text" class="form-control" id="dm-target-ip" placeholder="10.100.0.2">
+          <div class="form-hint">A peer address reachable through the tunnel.</div>
         </div>
         <div class="form-group">
-          <label class="form-label">Port on this server</label>
-          <input type="number" class="form-control" id="trp-bind-port" placeholder="auto" min="0" max="65535">
-          <div class="form-hint">Leave blank to let the server pick.</div>
+          <label class="form-label">Port</label>
+          <input type="number" class="form-control" id="dm-target-port" value="80" min="1" max="65535">
+          <div class="form-hint">Where the service listens.</div>
         </div>
       </div>
       <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">Bind address</label>
-        <input type="text" class="form-control" id="trp-bind-ip" placeholder="0.0.0.0" autocomplete="off">
-        <div class="form-hint">Blank binds every interface, which is what you normally want on a VPS.</div>
+        <label class="form-check">
+          <input type="checkbox" id="dm-enabled" checked>
+          <span>Enabled on save</span>
+        </label>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeTRP()">Cancel</button>
-      <button class="btn btn-primary" id="trp-submit" onclick="submitTRP()">Create mapping</button>
+      <button class="btn btn-outline" onclick="closeDomain()">Cancel</button>
+      <button class="btn btn-primary" id="domain-submit" onclick="submitDomain()">Create mapping</button>
     </div>
   </div>
 </div>
 
 <script src="common.js"></script>
-<script src="trp.js"></script>
+<script src="domains.js"></script>
 </body>
 </html>
