@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -790,6 +791,14 @@ func (h *MeshHub) ListNodes(withPSK bool) []NodeStatus {
 	// would need special-casing on every page.
 	out := []NodeStatus{}
 	for _, rec := range h.nodes {
+		// Filter out nodes with obviously bogus device IDs (ghosts from
+		// misbehaving clients). Persisted nodes may already have them.
+		if rec.DeviceID != "" {
+			ld := strings.ToLower(rec.DeviceID)
+			if len(rec.DeviceID) > 32 || strings.Contains(ld, "version") || strings.Contains(ld, "systemtype") || strings.Contains(ld, "clienttype") || strings.Contains(ld, "user-agent") || strings.Contains(ld, "host:") || strings.Contains(ld, "accept") || strings.Contains(ld, "connection") {
+				continue
+			}
+		}
 		st := NodeStatus{
 			ID:    rec.ID,
 			Name:  rec.Name,

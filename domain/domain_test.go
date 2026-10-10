@@ -204,6 +204,7 @@ func TestWritersRendering(t *testing.T) {
 		addr:     "10.100.0.2:8080",
 		certPath: "/var/certs/cert.pem",
 		keyPath:  "/var/certs/key.pem",
+		ssl:      true,
 	}
 
 	ng := nginxConf(rr, 8100)
@@ -229,6 +230,63 @@ func TestWritersRendering(t *testing.T) {
 		if !strings.Contains(ap, want) {
 			t.Errorf("apache config missing %q:\n%s", want, ap)
 		}
+	}
+}
+
+// TestTLSBlockGatedOnCert locks the failure that used to make mapping dead:
+// emitting an ssl_certificate reference before the certificate exists makes
+// nginx -t / apachectl configtest fail, so the whole vhost (challenge proxy
+// included) never loads and the cert is never issued.
+func TestTLSBlockGatedOnCert(t *testing.T) {
+	rec := &Record{ID: "abc123", Domain: "app.example.com"}
+	noCert := renderRec{
+		rec: rec, addr: "10.100.0.2:8080",
+		certPath: "/var/certs/cert.pem", keyPath: "/var/certs/key.pem",
+		ssl: false,
+	}
+
+	for _, conf := range []string{nginxConf(noCert, 8100), apacheConf(noCert, 8100)} {
+		if strings.Contains(conf, "cert.pem") {
+			t.Errorf("config must not reference the certificate before it exists:\n%s", conf)
+		}
+		if !strings.Contains(conf, "acme-challenge") {
+			t.Errorf("config must still proxy the ACME challenge:\n%s", conf)
+		}
+	}
+}
+
+// TestNginxIncludeDir makes sure we write where nginx actually loads from.
+func TestNginxIncludeDir(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	defaultDir := filepath.Join(dir, "conf.d")
+
+	confD := write("nginx.conf", "http {\n  include /etc/nginx/conf.d/*.conf;\n}")
+	if got := nginxIncludeDir(confD, defaultDir); got != defaultDir {
+		t.Errorf("conf.d include: got %q, want %q", got, defaultDir)
+	}
+
+	sites := write("nginx-sites.conf", "http {\n  include /etc/nginx/sites-enabled/*.conf;\n}")
+	want := filepath.Join(dir, "sites-available")
+	if got := nginxIncludeDir(sites, defaultDir); got != want {
+		t.Errorf("sites-enabled include: got %q, want %q", got, want)
+	}
+
+	// A commented-out include must not count.
+	commented := write("nginx-commented.conf", "http {\n  #include /etc/nginx/conf.d/*.conf;\n}")
+	if got := nginxIncludeDir(commented, defaultDir); got != defaultDir {
+		t.Errorf("commented include: got %q, want %q", got, defaultDir)
+	}
+
+	// Missing main config falls back to the default directory.
+	if got := nginxIncludeDir(filepath.Join(dir, "nope.conf"), defaultDir); got != defaultDir {
+		t.Errorf("missing config: got %q, want %q", got, defaultDir)
 	}
 }
 

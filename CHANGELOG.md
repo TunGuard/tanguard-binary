@@ -20,6 +20,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Caddyfile import with its site file, or the traefik dynamic file — so stale
   routes are never left behind.
 
+
+## [2.4.10] - 2026-10-10
+
+### Fixed
+
+- **Don't emit SSL vhosts until the certificate exists.** Nginx/Apache writers
+  now only write the `443`/TLS blocks when the certificate is on disk. Writing
+  `ssl_certificate` for missing files made `nginx -t`/`apachectl configtest`
+  fail, which prevented the whole vhost (including the port-80 ACME challenge
+  proxy) from loading. The port-80 block is always emitted so HTTP-01
+  validation can proceed and the cert is issued first.
+- **Write nginx config where nginx actually includes it.** The server detects
+  whether `/etc/nginx/nginx.conf` includes `conf.d/` or `sites-enabled/` (Debian
+  layout) and writes to the matching directory, creating symlinks into
+  `sites-enabled` when needed. Stale configs are cleaned from both locations.
+- **Filter bogus mesh device IDs.** The mesh control plane now rejects
+  obviously junk device IDs (very long strings containing debug/HTTP headers like
+  `version`, `systemtype`, `clienttype`, `user-agent`) instead of creating
+  ghost nodes. Bogus device IDs are also filtered from listings and pruned on
+  startup.
+
 ## [2.4.8] - 2026-10-10
 
 ### Changed

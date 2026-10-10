@@ -372,6 +372,8 @@ func StartMesh(cfg *config.Config) *MeshHub {
 		log.Printf("[mesh] WARNING: could not load nodes: %v", err)
 	}
 
+	h.pruneBogus()
+
 	h.relay = NewP2PRelay(h, mcfg.RelayListen)
 	go h.relay.Run()
 
@@ -580,7 +582,15 @@ func (h *MeshHub) newNodeLocked(psk, deviceID, remoteIP string) *NodeRecord {
 	}
 	name := "node-" + id
 	if deviceID != "" {
-		name = "dev-" + deviceID[:min(6, len(deviceID))]
+		// Ignore obviously bogus device IDs that some misbehaving clients
+		// send (e.g. HTTP headers or verbose debug strings). A real device
+		// identifier is short and stable.
+		ld := strings.ToLower(deviceID)
+		if len(deviceID) > 32 || strings.Contains(ld, "version") || strings.Contains(ld, "systemtype") || strings.Contains(ld, "clienttype") || strings.Contains(ld, "user-agent") || strings.Contains(ld, "host:") || strings.Contains(ld, "accept") || strings.Contains(ld, "connection") {
+			deviceID = ""
+		} else {
+			name = "dev-" + deviceID[:min(6, len(deviceID))]
+		}
 	} else if remoteIP != "" {
 		name = "node-" + remoteIP
 	}
@@ -656,6 +666,10 @@ func (h *MeshHub) RemoveNode(id string) error {
 // subsequent reconnects reclaim the same record.
 func (h *MeshHub) SetDeviceID(id, deviceID string) {
 	if deviceID == "" {
+		return
+	}
+	ld := strings.ToLower(deviceID)
+	if len(deviceID) > 32 || strings.Contains(ld, "version") || strings.Contains(ld, "systemtype") || strings.Contains(ld, "clienttype") || strings.Contains(ld, "user-agent") || strings.Contains(ld, "host:") || strings.Contains(ld, "accept") || strings.Contains(ld, "connection") {
 		return
 	}
 	h.mu.Lock()
@@ -977,6 +991,42 @@ func (h *MeshHub) sendRaw(id string, cmd byte, payload [8]byte) error {
 		return fmt.Errorf("node offline")
 	}
 	return nc.SendCommand(cmd, payload)
+}
+
+// pruneBogus removes nodes whose device IDs are obviously bogus garbage from
+// misbehaving clients. These never produce legitimate peers and just pollute
+// the UI.
+func (h *MeshHub) pruneBogus() {
+	h.mu.Lock()
+	var toDel []string
+	for id, rec := range h.nodes {
+		if rec.DeviceID != "" {
+			ld := strings.ToLower(rec.DeviceID)
+			if len(rec.DeviceID) > 32 || strings.Contains(ld, "version") || strings.Contains(ld, "systemtype") || strings.Contains(ld, "clienttype") || strings.Contains(ld, "user-agent") || strings.Contains(ld, "host:") || strings.Contains(ld, "accept") || strings.Contains(ld, "connection") {
+				toDel = append(toDel, id)
+				continue
+			}
+		}
+	}
+	for _, id := range toDel {
+		rec := h.nodes[id]
+		if rec == nil {
+			continue
+		}
+		delete(h.nodes, id)
+		h.unindexLocked(rec)
+		if nc := h.conns[id]; nc != nil {
+			nc.conn.Close()
+			delete(h.conns, id)
+		}
+	}
+	changed := len(toDel) > 0
+	h.mu.Unlock()
+	if changed {
+		if err := h.saveNodes(); err != nil {
+			log.Printf("[mesh] WARNING: failed to prune bogus nodes: %v", err)
+		}
+	}
 }
 
 // ---- Helpers --------------------------------------------------------------

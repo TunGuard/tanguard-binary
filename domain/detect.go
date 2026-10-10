@@ -52,7 +52,49 @@ func Detect() DetectResult {
 	res.Port80Free = res.Owner80 == ""
 	res.Port443Free = res.Owner443 == ""
 	res.Webserver, res.ConfDir = selectWebserver(res.Owner80, res.Owner443, processComms())
+	if res.Webserver == "nginx" {
+		res.ConfDir = nginxConfDir()
+	}
 	return res
+}
+
+// nginxConfDir returns the directory nginx will actually load. Debian/Ubuntu
+// installs include /etc/nginx/conf.d/*.conf, but some only include the
+// sites-enabled layout — writing to a directory nginx never includes would
+// leave the mapping inert.
+func nginxConfDir() string {
+	return nginxIncludeDir("/etc/nginx/nginx.conf", "/etc/nginx/conf.d")
+}
+
+// nginxIncludeDir decides where to write nginx config given its main config
+// file and the default conf.d location.
+func nginxIncludeDir(mainPath, defaultDir string) string {
+	data, err := os.ReadFile(mainPath)
+	if err != nil {
+		return defaultDir
+	}
+	var hasConfD, hasSites bool
+	for _, line := range strings.Split(string(data), "\n") {
+		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		if strings.Contains(l, "conf.d") {
+			hasConfD = true
+		}
+		if strings.Contains(l, "sites-enabled") {
+			hasSites = true
+		}
+	}
+	if hasConfD {
+		return defaultDir
+	}
+	if hasSites {
+		// Debian layout: write into sites-available and symlink into
+		// sites-enabled, exactly like the default site.
+		return filepath.Join(filepath.Dir(defaultDir), "sites-available")
+	}
+	return defaultDir
 }
 
 // selectWebserver picks the server whose config we should manage: the process

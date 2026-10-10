@@ -124,10 +124,25 @@ func nginxFile(dir, id string) string { return filepath.Join(dir, "tanguard-"+id
 
 func writeNginx(dir string, recs []renderRec, chPort int, present map[string]bool) error {
 	cleanStale(dir, "tanguard-*.conf", "tanguard-", present)
+	enabledDir := ""
+	if filepath.Base(dir) == "sites-available" {
+		enabledDir = filepath.Join(filepath.Dir(dir), "sites-enabled")
+	}
 	for _, rr := range recs {
-		if err := writeFile(nginxFile(dir, rr.rec.ID), nginxConf(rr, chPort)); err != nil {
+		path := nginxFile(dir, rr.rec.ID)
+		if err := writeFile(path, nginxConf(rr, chPort)); err != nil {
 			return err
 		}
+		if enabledDir != "" {
+			link := filepath.Join(enabledDir, filepath.Base(path))
+			os.Remove(link)
+			if err := os.Symlink(path, link); err != nil {
+				log.Printf("[domain] enable nginx site: %v", err)
+			}
+		}
+	}
+	if enabledDir != "" {
+		cleanStale(enabledDir, "tanguard-*.conf", "tanguard-", present)
 	}
 	return nil
 }
@@ -137,16 +152,21 @@ func nginxConf(rr renderRec, chPort int) string {
 	fmt.Fprintf(&b, "# Managed by TunGuard — do not edit.\n# %s\n\n", rr.rec.Domain)
 	fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n", rr.rec.Domain)
 	fmt.Fprintf(&b, "\tlocation /.well-known/acme-challenge/ {\n\t\tproxy_pass http://127.0.0.1:%d;\n\t}\n", chPort)
-	fmt.Fprintf(&b, "\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n")
-	fmt.Fprintf(&b, "server {\n\tlisten 443 ssl;\n\tserver_name %s;\n", rr.rec.Domain)
-	fmt.Fprintf(&b, "\tssl_certificate %s;\n\tssl_certificate_key %s;\n", rr.certPath, rr.keyPath)
-	fmt.Fprintf(&b, "\tssl_protocols TLSv1.2 TLSv1.3;\n")
-	fmt.Fprintf(&b, "\tlocation / {\n\t\tproxy_pass http://%s;\n", rr.addr)
-	fmt.Fprintf(&b, "\t\tproxy_http_version 1.1;\n")
-	fmt.Fprintf(&b, "\t\tproxy_set_header Host $host;\n")
-	fmt.Fprintf(&b, "\t\tproxy_set_header X-Real-IP $remote_addr;\n")
-	fmt.Fprintf(&b, "\t\tproxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-	fmt.Fprintf(&b, "\t\tproxy_set_header X-Forwarded-Proto $scheme;\n\t}\n}\n")
+	fmt.Fprintf(&b, "\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n")
+	// The TLS server only appears once the certificate exists: a missing
+	// ssl_certificate file makes nginx -t fail, which would prevent this
+	// whole file (challenge proxy included) from ever loading.
+	if rr.ssl {
+		fmt.Fprintf(&b, "\nserver {\n\tlisten 443 ssl;\n\tserver_name %s;\n", rr.rec.Domain)
+		fmt.Fprintf(&b, "\tssl_certificate %s;\n\tssl_certificate_key %s;\n", rr.certPath, rr.keyPath)
+		fmt.Fprintf(&b, "\tssl_protocols TLSv1.2 TLSv1.3;\n")
+		fmt.Fprintf(&b, "\tlocation / {\n\t\tproxy_pass http://%s;\n", rr.addr)
+		fmt.Fprintf(&b, "\t\tproxy_http_version 1.1;\n")
+		fmt.Fprintf(&b, "\t\tproxy_set_header Host $host;\n")
+		fmt.Fprintf(&b, "\t\tproxy_set_header X-Real-IP $remote_addr;\n")
+		fmt.Fprintf(&b, "\t\tproxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		fmt.Fprintf(&b, "\t\tproxy_set_header X-Forwarded-Proto $scheme;\n\t}\n}\n")
+	}
 	return b.String()
 }
 
@@ -183,12 +203,17 @@ func apacheConf(rr renderRec, chPort int) string {
 	fmt.Fprintf(&b, "\tProxyPreserveHost On\n")
 	fmt.Fprintf(&b, "\tProxyPass /.well-known/acme-challenge/ http://127.0.0.1:%d/\n", chPort)
 	fmt.Fprintf(&b, "\tProxyPassReverse /.well-known/acme-challenge/ http://127.0.0.1:%d/\n", chPort)
-	fmt.Fprintf(&b, "\tRedirect permanent / https://%s/\n</VirtualHost>\n\n", rr.rec.Domain)
-	fmt.Fprintf(&b, "<VirtualHost *:443>\n\tServerName %s\n", rr.rec.Domain)
-	fmt.Fprintf(&b, "\tSSLEngine on\n\tSSLCertificateFile %s\n\tSSLCertificateKeyFile %s\n", rr.certPath, rr.keyPath)
-	fmt.Fprintf(&b, "\tProxyPreserveHost On\n")
-	fmt.Fprintf(&b, "\tProxyPass / http://%s/\n\tProxyPassReverse / http://%s/\n", rr.addr, rr.addr)
-	fmt.Fprintf(&b, "\t<Proxy *>\n\t\tRequire all granted\n\t</Proxy>\n</VirtualHost>\n")
+	fmt.Fprintf(&b, "\tRedirect permanent / https://%s/\n</VirtualHost>\n", rr.rec.Domain)
+	// Only emit the TLS vhost once the certificate is on disk: a missing
+	// SSLCertificateFile makes apachectl configtest fail, which would stop
+	// the whole file (challenge proxy included) from loading.
+	if rr.ssl {
+		fmt.Fprintf(&b, "\n<VirtualHost *:443>\n\tServerName %s\n", rr.rec.Domain)
+		fmt.Fprintf(&b, "\tSSLEngine on\n\tSSLCertificateFile %s\n\tSSLCertificateKeyFile %s\n", rr.certPath, rr.keyPath)
+		fmt.Fprintf(&b, "\tProxyPreserveHost On\n")
+		fmt.Fprintf(&b, "\tProxyPass / http://%s/\n\tProxyPassReverse / http://%s/\n", rr.addr, rr.addr)
+		fmt.Fprintf(&b, "\t<Proxy *>\n\t\tRequire all granted\n\t</Proxy>\n</VirtualHost>\n")
+	}
 	return b.String()
 }
 
@@ -248,6 +273,9 @@ func sweepServerLocked(name string) {
 	switch name {
 	case "nginx":
 		removeGlob(filepath.Join(dir, "tanguard-*.conf"))
+		// nginx may be configured with the Debian sites layout instead.
+		removeGlob(filepath.Join(filepath.Dir(dir), "sites-available", "tanguard-*.conf"))
+		removeGlob(filepath.Join(filepath.Dir(dir), "sites-enabled", "tanguard-*.conf"))
 	case "apache":
 		removeGlob(filepath.Join(dir, "tanguard-*.conf"))
 		removeGlob(filepath.Join(filepath.Dir(dir), "sites-enabled", "tanguard-*.conf"))
