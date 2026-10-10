@@ -237,6 +237,66 @@ func writeTraefik(dir string, recs []renderRec) error {
 
 // ─── reload ──────────────────────────────────────────────────────────────
 
+// sweepServerLocked removes the config files this process generated for a
+// server that is no longer the one handling public traffic. Best-effort: a
+// failure only logs, so a server we are turning away from never blocks.
+func sweepServerLocked(name string) {
+	dir := confDirFor(name)
+	if dir == "" {
+		return
+	}
+	switch name {
+	case "nginx":
+		removeGlob(filepath.Join(dir, "tanguard-*.conf"))
+	case "apache":
+		removeGlob(filepath.Join(dir, "tanguard-*.conf"))
+		removeGlob(filepath.Join(filepath.Dir(dir), "sites-enabled", "tanguard-*.conf"))
+	case "caddy":
+		removeCaddyImport(dir)
+	case "traefik":
+		os.Remove(filepath.Join(dir, "tanguard-dynamic.yml"))
+	}
+}
+
+func removeGlob(pattern string) {
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return
+	}
+	for _, p := range matches {
+		if err := os.Remove(p); err == nil {
+			log.Printf("[domain] removed stale config %s", p)
+		}
+	}
+}
+
+// removeCaddyImport strips TunGuard's import line from the main Caddyfile and
+// deletes the generated site file, so caddy keeps loading cleanly.
+func removeCaddyImport(dir string) {
+	os.Remove(filepath.Join(dir, "tanguard-domains.conf"))
+	caddyfile := filepath.Join(dir, "Caddyfile")
+	data, err := os.ReadFile(caddyfile)
+	if err != nil {
+		return
+	}
+	var out []string
+	skipNext := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "# Managed by TunGuard") {
+			skipNext = true
+			continue
+		}
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		out = append(out, line)
+	}
+	if err := os.WriteFile(caddyfile, []byte(strings.Join(out, "\n")), 0644); err != nil {
+		log.Printf("[domain] could not rewrite caddy Caddyfile: %v", err)
+	}
+}
+
 func reload(name, confDir string) error {
 	var candidates [][]string
 	switch name {

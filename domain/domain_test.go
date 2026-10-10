@@ -83,6 +83,33 @@ func TestManagerIdleWithoutMappings(t *testing.T) {
 	}
 }
 
+func TestSelectWebserverPrefersPortOwner(t *testing.T) {
+	cases := []struct {
+		owner80, owner443 string
+		running           []string
+		want              string
+	}{
+		// The process holding a public port wins over any other running
+		// server.
+		{owner80: "nginx", running: []string{"caddy"}, want: "nginx"},
+		{owner80: "apache2", running: []string{"nginx"}, want: "apache"},
+		{owner443: "httpd", want: "apache"},
+		// Unrecognised port holder: any running supported server is used.
+		{owner80: "lighttpd", running: []string{"nginx"}, want: "nginx"},
+		// No owner: first supported server in preference order.
+		{running: []string{"caddy", "nginx"}, want: "nginx"},
+		{running: []string{"apache2"}, want: "apache"},
+		{},
+	}
+	for _, tc := range cases {
+		got, _ := selectWebserver(tc.owner80, tc.owner443, tc.running)
+		if got != tc.want {
+			t.Errorf("selectWebserver(%q,%q,%v) = %q, want %q",
+				tc.owner80, tc.owner443, tc.running, got, tc.want)
+		}
+	}
+}
+
 func TestManagerAddListUpdateRemove(t *testing.T) {
 	m := testManager(t, "")
 

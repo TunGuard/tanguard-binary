@@ -70,6 +70,11 @@ func (m *Manager) unapplyLocked(_ *Record) { m.resyncLocked() }
 // owns the public ports. The caller must hold m.mu.
 func (m *Manager) resyncLocked() {
 	det := m.detectHost()
+	// The server that should route traffic changed: stop managing the old
+	// one's generated config before writing anywhere else.
+	if prev := m.srv.webserver; prev != "" && det.Webserver != prev {
+		sweepServerLocked(prev)
+	}
 	m.srv.webserver = det.Webserver
 
 	m.routes.clear()

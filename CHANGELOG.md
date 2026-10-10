@@ -5,6 +5,21 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.9] - 2026-10-10
+
+### Fixed
+
+- **Detect the web server actually holding ports 80/443.** Detection now keys
+  off whoever owns the public ports first, then falls back to any running
+  supported server. Previously it only scanned running processes and could
+  pick a server that was not the one listening (e.g. nginx installed but idle
+  while apache served), so the mapping was written to the wrong config.
+- **Manage config across server switches.** When the active web server
+  changes (apache → nginx, nginx → caddy, ...), the generated config of the
+  previous server is removed — vhost files and sites-enabled symlinks, the
+  Caddyfile import with its site file, or the traefik dynamic file — so stale
+  routes are never left behind.
+
 ## [2.4.8] - 2026-10-10
 
 ### Changed
