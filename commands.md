@@ -183,8 +183,9 @@ domain remove app.example.com                   # by id or domain name
 The domain points at this server; TunGuard terminates TLS with a Let's
 Encrypt certificate and proxies to the backend. If nginx, Apache, Caddy or
 Traefik is detected, the route is written into that server and reloaded;
-otherwise the built-in proxy listens on ports 80/443. Requires
-`DOMAIN_ENABLED=true`; ports are configurable with `DOMAIN_HTTP_PORT`,
+otherwise the built-in proxy listens on ports 80/443. The proxy is on by
+default and does nothing until the first mapping is added; disable it with
+`DOMAIN_ENABLED=false`. Ports are configurable with `DOMAIN_HTTP_PORT`,
 `DOMAIN_HTTPS_PORT` and `DOMAIN_CHALLENGE_PORT`.
 
 ## Policy groups

@@ -251,13 +251,15 @@ ssh host uptime            # run one command and exit
 
 `Ctrl-]` detaches an interactive session and returns to the TunGuard prompt. See [commands.md](commands.md#ssh-client) for the full option set.
 
-## Domains (optional)
+## Domains
 
-Enable with `DOMAIN_ENABLED=true`. This turns TunGuard into an HTTPS reverse
-proxy: a public domain is proxied to an existing **TRP** port mapping, or to a
-service reachable over the tunnel (a `--wg ip:port` backend), and TLS is
-handled automatically with a Let's Encrypt certificate (HTTP-01 challenge).
-Point the domain's A/AAAA record at this server so ports 80 and 443 reach it.
+The domain proxy is **on by default** and stays completely out of the way
+until you add a mapping — it binds no ports and makes no ACME call until the
+first domain is configured. Set `DOMAIN_ENABLED=false` to turn it off. A
+public domain is proxied to an existing **TRP** port mapping, or to a service
+reachable over the tunnel (a `--wg ip:port` backend), and TLS is handled
+automatically with a Let's Encrypt certificate (HTTP-01 challenge). Point the
+domain's A/AAAA record at this server so ports 80 and 443 reach it.
 
 On first use TunGuard detects the server's web stack:
 
@@ -318,7 +320,7 @@ All settings are configured via environment variables.
 | `SSH_LISTEN` | `:2222` | SSH gateway address |
 | `SSH_KEY_FILE` | auto | SSH host key path (auto-generated if missing) |
 | `TUNGARD_API_KEY` | — | API key for PHP / script integration (also settable per-request) |
-| `DOMAIN_ENABLED` | `false` | Enable the HTTPS domain proxy (see **Domains**) |
+| `DOMAIN_ENABLED` | `true` | HTTPS domain proxy. On by default; set to `false` to turn it off |
 | `DOMAIN_HTTP_PORT` | `80` | Public HTTP port used for the ACME challenge and redirects |
 | `DOMAIN_HTTPS_PORT` | `443` | Public HTTPS port of the domain proxy |
 | `DOMAIN_CHALLENGE_PORT` | `8100` | Local port the Let's Encrypt HTTP-01 challenge answers on |

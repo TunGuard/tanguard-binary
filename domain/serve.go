@@ -73,6 +73,7 @@ func (m *Manager) resyncLocked() {
 	m.srv.webserver = det.Webserver
 
 	m.routes.clear()
+	live := 0
 	for _, rec := range m.records {
 		if !rec.Enabled {
 			continue
@@ -83,18 +84,32 @@ func (m *Manager) resyncLocked() {
 			continue
 		}
 		m.routes.set(rec.Domain, addr)
+		live++
 	}
 
-	// A supported webserver is always preferred: write config into it.
-	if det.Webserver != "" && det.ConfDir != "" {
+	// A supported webserver is always preferred, but only touch it when there
+	// is something to serve — or when we were already serving through it, so
+	// removing the last mapping still cleans its generated config.
+	if det.Webserver != "" && det.ConfDir != "" && (live > 0 || m.srv.mode == "external") {
 		m.srv.mode = "external"
 		m.writeExternalLocked(det)
-		go m.issueCerts(det)
+		if live > 0 {
+			go m.issueCerts(det)
+		} else {
+			m.srv.mode = "idle"
+		}
 		return
 	}
 
 	if m.builtinStarted {
 		m.srv.mode = "builtin"
+		return
+	}
+	if live == 0 {
+		// Nothing to serve yet: do not grab the public ports on a host that
+		// is not using domains. The first mapping starts the proxy.
+		m.srv.mode = "idle"
+		m.srv.lastErr = ""
 		return
 	}
 	if err := m.startBuiltinLocked(det); err != nil {
@@ -212,6 +227,10 @@ func (m *Manager) proxyHandler() http.Handler {
 func (m *Manager) issueCerts(det DetectResult) {
 	m.certMu.Lock()
 	defer m.certMu.Unlock()
+
+	if m.iss != nil {
+		m.iss.start()
+	}
 
 	for _, rec := range m.Records() {
 		if !rec.Enabled || m.iss == nil {

@@ -5,6 +5,17 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.8] - 2026-10-10
+
+### Changed
+
+- **The domain proxy is now on by default.** It no longer requires
+  `DOMAIN_ENABLED=true` just to see the Domains page — a fresh install shows
+  the feature live. It stays completely dormant until the first mapping is
+  added: no public port is bound and no ACME account call is made until then,
+  so enabling it by default costs nothing on servers that do not use domains.
+  Set `DOMAIN_ENABLED=false` to turn it off.
+
 ## [2.4.7] - 2026-10-10
 
 ### Added

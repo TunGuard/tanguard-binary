@@ -61,6 +61,28 @@ func TestNormalizeDomain(t *testing.T) {
 	}
 }
 
+func TestManagerIdleWithoutMappings(t *testing.T) {
+	// No mappings means no public ports, no ACME call, no webserver touch:
+	// the proxy stays dormant until the first mapping is added.
+	m := NewManager(&config.Config{DataDir: t.TempDir(), DomainEnabled: true})
+	m.SetDetect(func() DetectResult {
+		return DetectResult{Webserver: "nginx", ConfDir: "/etc/nginx/conf.d"}
+	})
+	if err := m.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	m.Start()
+	if got := m.Status()["mode"]; got != "idle" {
+		t.Fatalf("mode with no mappings = %v, want idle", got)
+	}
+	if m.builtinStarted {
+		t.Fatalf("built-in proxy should not start without mappings")
+	}
+	if m.iss != nil && m.iss.started {
+		t.Fatalf("ACME issuer should not start without mappings")
+	}
+}
+
 func TestManagerAddListUpdateRemove(t *testing.T) {
 	m := testManager(t, "")
 

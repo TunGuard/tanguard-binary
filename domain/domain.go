@@ -195,7 +195,6 @@ func (m *Manager) Start() {
 		log.Printf("[domain] data dir: %v", err)
 	}
 	m.iss = newIssuer(filepath.Join(m.dir, "certs"), m.chPort)
-	m.iss.start()
 	m.resyncLocked()
 }
 

@@ -27,13 +27,14 @@ import (
 // /.well-known/acme-challenge/ to a loopback listener owned here. Built-in
 // mode uses autocert.Manager instead.
 type Issuer struct {
-	mu     sync.Mutex
-	dir    string
-	port   int
-	client *acme.Client
-	tokens map[string]string
-	ln     net.Listener
-	srv    *http.Server
+	mu      sync.Mutex
+	dir     string
+	port    int
+	started bool
+	client  *acme.Client
+	tokens  map[string]string
+	ln      net.Listener
+	srv     *http.Server
 }
 
 func newIssuer(dir string, port int) *Issuer {
@@ -41,7 +42,17 @@ func newIssuer(dir string, port int) *Issuer {
 }
 
 // start loads the account key and brings up the loopback challenge handler.
+// It is idempotent and only ever called when a certificate is actually
+// needed, so a server that is not using domains makes no ACME network call
+// and binds no extra port.
 func (iss *Issuer) start() {
+	iss.mu.Lock()
+	if iss.started {
+		iss.mu.Unlock()
+		return
+	}
+	iss.started = true
+	iss.mu.Unlock()
 	if err := os.MkdirAll(iss.dir, 0700); err != nil {
 		log.Printf("[domain] cert dir: %v", err)
 	}

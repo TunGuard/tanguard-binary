@@ -68,7 +68,7 @@ func LoadConfig() *Config {
 		TLSCertFile: EnvStr("TLS_CERT_FILE", ""),
 		TLSKeyFile:  EnvStr("TLS_KEY_FILE", ""),
 
-		DomainEnabled:       EnvStr("DOMAIN_ENABLED", "false") == "true",
+		DomainEnabled:       EnvStr("DOMAIN_ENABLED", "true") == "true",
 		DomainHTTPPort:      EnvInt("DOMAIN_HTTP_PORT", 80),
 		DomainHTTPSPort:     EnvInt("DOMAIN_HTTPS_PORT", 443),
 		DomainChallengePort: EnvInt("DOMAIN_CHALLENGE_PORT", 8100),
