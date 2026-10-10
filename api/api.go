@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"tanguard/adguard"
 	"tanguard/auth"
 	"tanguard/config"
 	"tanguard/domain"
@@ -41,6 +42,7 @@ type API struct {
 	hub  *p2p.MeshHub
 	trp  *trp.TRPManager
 	dom  *domain.Manager
+	adg  *adguard.Manager
 	ipMu sync.Mutex
 }
 
@@ -87,6 +89,15 @@ func (a *API) SetDomain(dom *domain.Manager) {
 		a.dom.SetTRPLookup(a.trpLookup)
 	}
 }
+
+// SetAdGuard attaches the AdGuard Home manager.
+func (a *API) SetAdGuard(ag *adguard.Manager) {
+	if a == nil {
+		return
+	}
+	a.adg = ag
+}
+
 
 // trpLookup resolves a TRP mapping reference (full id or unique id prefix) to
 // the local address the mapping listens on. A domain proxies to that address,
@@ -165,6 +176,7 @@ func (a *API) Start() {
 	registerMeshRoutes(mux, a)
 	registerPolicyRoutes(mux, a)
 	registerDomainRoutes(mux, a)
+	registerAdGuardRoutes(mux, a)
 
 	handler := corsMiddleware(logMiddleware(mux))
 
@@ -701,10 +713,6 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.DNS == "" {
-		req.DNS = "1.1.1.1"
-	}
-
 	privBytes, pubBytes, err := config.GenerateKeyPair()
 	if err != nil {
 		jsonErr(w, 500, "key generation failed")
@@ -712,6 +720,10 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	clientPriv := hex.EncodeToString(privBytes)
 	clientPub := hex.EncodeToString(pubBytes)
+
+	if req.DNS == "" {
+		req.DNS = a.dnsForPeer(clientPub, req.DeviceID)
+	}
 
 	a.ipMu.Lock()
 	if req.AllowedIP == "" {
@@ -815,9 +827,8 @@ func (a *API) handlePeerConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.DNS == "" {
-		req.DNS = "1.1.1.1"
+		req.DNS = a.dnsForPeer(rec.PublicKey, rec.DeviceID)
 	}
-
 	interfaceIP := strings.TrimSuffix(rec.AllowedIP, "/32")
 	pub := a.wg.PublicKey()
 	config := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\nEndpoint = %s:%d\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
@@ -834,6 +845,30 @@ func (a *API) handlePeerConfig(w http.ResponseWriter, r *http.Request) {
 		"public_key":  rec.PublicKey,
 	})
 }
+
+func (a *API) dnsForPeer(pubKey string, deviceID string) string {
+	if a.policies == nil {
+		return "1.1.1.1"
+	}
+	// check by peer public key first
+	if pubKey != "" && a.policies.Allows(pubKey, policy.CapAdGuard) {
+		if a.adg != nil {
+			if d := a.adg.DNSForGroup(true); d != "" {
+				return d
+			}
+		}
+	}
+	// check by device id if present
+	if deviceID != "" && a.policies.AllowsDevice(deviceID, policy.CapAdGuard) {
+		if a.adg != nil {
+			if d := a.adg.DNSForGroup(true); d != "" {
+				return d
+			}
+		}
+	}
+	return "1.1.1.1"
+}
+
 
 func (a *API) nextAvailableIP() (net.IP, error) {
 	_, ipnet, err := net.ParseCIDR(a.cfg.Subnet)

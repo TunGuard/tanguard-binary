@@ -12,6 +12,7 @@ import (
 	"tanguard/api"
 	"tanguard/auth"
 	"tanguard/config"
+	"tanguard/adguard"
 	"tanguard/domain"
 	"tanguard/p2p"
 	"tanguard/peers"
@@ -126,6 +127,20 @@ func startMesh(cfg *config.Config, policies *policy.PolicyStore, store *peers.Pe
 	return hub, trpMgr
 }
 
+// startAdGuard boots the AdGuard Home instance when enabled.
+func startAdGuard(cfg *config.Config) *adguard.Manager {
+	if !cfg.AdGuardEnabled {
+		return nil
+	}
+	ag := adguard.NewManager(cfg)
+	if err := ag.Start(); err != nil {
+		log.Printf("[main] WARNING: could not start AdGuard Home: %v", err)
+		return nil
+	}
+	log.Printf("[main] adguard home running at %s", ag.WebAddr())
+	return ag
+}
+
 // startDomain boots the domain reverse proxy when enabled. It loads the
 // persisted mappings, then brings up the serving side (built-in proxy or
 // external webserver config) so domains answer right away.
@@ -173,6 +188,7 @@ func runMeshOnly(cfg *config.Config) {
 	apiSrv.SetPolicy(policies)
 	apiSrv.SetMesh(hub, trpMgr)
 	apiSrv.SetDomain(startDomain(cfg))
+	apiSrv.SetAdGuard(startAdGuard(cfg))
 	go apiSrv.Start()
 	logDashboard(cfg, creds)
 
@@ -280,6 +296,7 @@ func main() {
 	apiSrv.SetPolicy(policies)
 	apiSrv.SetMesh(hub, trpMgr)
 	apiSrv.SetDomain(startDomain(cfg))
+	apiSrv.SetAdGuard(startAdGuard(cfg))
 	go apiSrv.Start()
 
 	if cfg.WebEnabled {

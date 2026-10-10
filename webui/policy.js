@@ -18,7 +18,8 @@ const RULES = [
   { field: 'allow_inter_device', el: 'rule-inter', label: 'Inter-device traffic' },
   { field: 'allow_p2p_mesh',     el: 'rule-p2p',  label: 'P2P mesh' },
   { field: 'allow_trp',          el: 'rule-trp',   label: 'TRP port mapping' },
-  { field: 'allow_wg_access',    el: 'rule-wg',    label: 'WireGuard internet' }
+  { field: 'allow_wg_access',    el: 'rule-wg',    label: 'WireGuard internet' },
+  { field: 'allow_adguard',      el: 'rule-adguard', label: 'AdGuard DNS filtering' }
 ];
 
 // A device is identified by its public key when it is a WireGuard peer, and by

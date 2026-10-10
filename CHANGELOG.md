@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routes are never left behind.
 
 
+## [2.4.11] - 2026-10-11
+
+### Added
+
+- **AdGuard Home integration.** Optional AdGuard Home DNS filtering service.
+  Enable with `ADGUARD_ENABLED=true`. TunGuard can download and manage
+  AdGuard Home automatically, generates a basic config (DNS/listen/web UI),
+  and exposes start/stop/status via API/UI. Policy groups gain an "AdGuard
+  DNS filtering" toggle - when enabled, generated client WireGuard configs
+  use AdGuard as the DNS server so clients receive filtered DNS. Defaults
+  follow sensible values (`ADGUARD_DNS_LISTEN=10.100.0.1:53`) and do not
+  affect existing TRP/domains behavior.
+
 ## [2.4.10] - 2026-10-10
 
 ### Fixed

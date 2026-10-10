@@ -39,10 +39,13 @@ const (
 	// CapWGAccess lets devices in the group use the tunnel as ordinary
 	// WireGuard internet access.
 	CapWGAccess
+	// CapAdGuard routes DNS through AdGuard Home for devices in this group
+	// when configured on the server.
+	CapAdGuard
 )
 
 // capabilityCount is the number of rule bits stored per group.
-const capabilityCount = 4
+const capabilityCount = 5
 
 // PolicyGroup is a named set of rule switches plus the peers assigned to it.
 // Rules are set when the group is created and can be edited later; membership
@@ -54,6 +57,7 @@ type PolicyGroup struct {
 	AllowP2PMesh     bool      `json:"allow_p2p_mesh"`
 	AllowTRP         bool      `json:"allow_trp"`
 	AllowWGAccess    bool      `json:"allow_wg_access"`
+	AllowAdGuard     bool      `json:"allow_adguard,omitempty"`
 	Builtin          bool      `json:"builtin,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -72,6 +76,8 @@ func (g *PolicyGroup) Allows(c Capability) bool {
 		return g.AllowTRP
 	case CapWGAccess:
 		return g.AllowWGAccess
+	case CapAdGuard:
+		return g.AllowAdGuard
 	}
 	return false
 }
@@ -428,6 +434,7 @@ func (ps *PolicyStore) Create(name string, rules PolicyGroup) (*PolicyGroup, err
 		AllowP2PMesh:     rules.AllowP2PMesh,
 		AllowTRP:         rules.AllowTRP,
 		AllowWGAccess:    rules.AllowWGAccess,
+		AllowAdGuard:     rules.AllowAdGuard,
 		CreatedAt:        time.Now(),
 	}
 	ps.groups[g.ID] = g
@@ -467,6 +474,7 @@ func (ps *PolicyStore) Update(id string, rules PolicyGroup) (*PolicyGroup, error
 	g.AllowP2PMesh = rules.AllowP2PMesh
 	g.AllowTRP = rules.AllowTRP
 	g.AllowWGAccess = rules.AllowWGAccess
+	g.AllowAdGuard = rules.AllowAdGuard
 	if name := strings.TrimSpace(rules.Name); name != "" {
 		if err := ps.uniqueNameLocked(name, id); err != nil {
 			ps.mu.Unlock()

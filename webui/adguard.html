@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TunGuard - AdGuard Home</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="style.css">
+<script>try{if(localStorage.getItem('tg-theme')==='light')document.documentElement.classList.add('light')}catch(e){}</script>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.classList.add('embed')</script>
+</head>
+<body data-page="adguard">
+<div class="app-shell">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon"><i class="fa-solid fa-shield-halved"></i></div>
+    <div>
+      <div class="logo-text">TunGuard</div>
+      <div class="logo-sub">WireGuard Server</div>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section-label">Main</div>
+    <a href="index.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-gauge"></i></span><span class="nav-label">Dashboard</span></a>
+    <a href="peers.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-users"></i></span><span class="nav-label">Peers</span></a>
+    <a href="p2p.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-diagram-project"></i></span><span class="nav-label">P2P</span></a>
+    <a href="trp.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-route"></i></span><span class="nav-label">TRP</span></a>
+    <a href="policy.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-shield-halved"></i></span><span class="nav-label">Policy Groups</span></a>
+    <a href="domains.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-globe"></i></span><span class="nav-label">Domains</span></a>
+    <a href="adguard.html" class="nav-item active"><span class="nav-icon"><i class="fa-solid fa-shield-dog"></i></span><span class="nav-label">AdGuard</span></a>
+    <div class="nav-section-label">System</div>
+    <a href="systemlogs.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span><span class="nav-label">System Logs</span></a>
+    <a href="terminal.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-terminal"></i></span><span class="nav-label">Terminal</span></a>
+    <a href="settings.html" class="nav-item"><span class="nav-icon"><i class="fa-solid fa-gear"></i></span><span class="nav-label">Settings</span></a>
+  </nav>
+</aside>
+<main class="main-content">
+  <div class="topbar">
+    <div class="topbar-title">AdGuard Home</div>
+  </div>
+  <div class="page-container">
+    <div class="card">
+      <div class="card-header"><h2 class="card-title">AdGuard Control</h2></div>
+      <div class="card-body">
+        <div class="form-group"><span id="status-text">Loading...</span></div>
+        <button class="btn btn-primary" onclick="startAG()">Start</button>
+        <button class="btn btn-secondary" onclick="stopAG()">Stop</button>
+        <button class="btn btn-outline" onclick="openUI()">Open UI</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h2 class="card-title">Configuration</h2></div>
+      <div class="card-body">
+        <div class="form-group"><label class="form-label">DNS Listen</label><input class="form-control" id="dns" readonly></div>
+        <div class="form-group"><label class="form-label">Web UI</label><input class="form-control" id="web" readonly></div>
+        <div class="form-group"><label class="form-label">Upstream</label><input class="form-control" id="upstream" readonly></div>
+        <div class="form-group"><label class="form-checkbox"><input type="checkbox" id="adult" disabled> Adult filter (Family protection via 1.1.1.2)</label></div>
+        <div class="form-hint">Configure via ADGUARD_* env vars. Assign AdGuard to policy groups to push filtered DNS to their clients.</div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+<script src="adguard.js"></script>
+</body>
+</html>

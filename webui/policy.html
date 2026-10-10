@@ -52,6 +52,10 @@
       <span class="nav-icon"><i class="fa-solid fa-globe"></i></span>
       <span class="nav-label">Domains</span>
     </a>
+    <a href="adguard.html" class="nav-item">
+      <span class="nav-icon"><i class="fa-solid fa-shield-dog"></i></span>
+      <span class="nav-label">AdGuard</span>
+    </a>
     <div class="nav-section-label">System</div>
     <a href="systemlogs.html" class="nav-item">
       <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
@@ -218,6 +222,13 @@
               <div class="policy-rule-hint">Traffic leaving the tunnel is dropped. Reaching this server stays available either way.</div>
             </div>
             <label class="policy-switch"><input type="checkbox" id="rule-wg" data-rule="allow_wg_access"><span class="slider"></span></label>
+          </div>
+          <div class="policy-rule">
+            <div>
+              <div class="policy-rule-label">Use AdGuard Home DNS filtering</div>
+              <div class="policy-rule-hint">Client configs will point DNS to AdGuard (if running) for filtered protection.</div>
+            </div>
+            <label class="policy-switch"><input type="checkbox" id="rule-adguard" data-rule="allow_adguard"><span class="slider"></span></label>
           </div>
         </div>
         <div class="form-hint">Every rule starts off. Switch on only what this group needs.</div>

@@ -39,6 +39,18 @@ type Config struct {
 	DomainHTTPPort      int
 	DomainHTTPSPort     int
 	DomainChallengePort int
+
+	// AdGuard Home integration: optional DNS filtering service. When enabled,
+	// TunGuard will manage an AdGuard Home instance and allow policy groups to
+	// opt into its filtered DNS.
+	AdGuardEnabled        bool
+	AdGuardBinaryPath     string
+	AdGuardDataDir        string
+	AdGuardDNSListen      string
+	AdGuardWebListen      string
+	AdGuardUpstream       string
+	AdGuardUpstreamFamily string
+	AdGuardFilterAdult    bool
 }
 
 // LoadConfig builds the server configuration from the environment, applying the
@@ -72,6 +84,15 @@ func LoadConfig() *Config {
 		DomainHTTPPort:      EnvInt("DOMAIN_HTTP_PORT", 80),
 		DomainHTTPSPort:     EnvInt("DOMAIN_HTTPS_PORT", 443),
 		DomainChallengePort: EnvInt("DOMAIN_CHALLENGE_PORT", 8100),
+
+		AdGuardEnabled:        EnvStr("ADGUARD_ENABLED", "false") == "true",
+		AdGuardBinaryPath:     EnvStr("ADGUARD_BINARY", "adguardhome"),
+		AdGuardDataDir:        EnvStr("ADGUARD_DATA_DIR", EnvStr("DATA_DIR", ".")),
+		AdGuardDNSListen:      EnvStr("ADGUARD_DNS_LISTEN", "10.100.0.1:53"),
+		AdGuardWebListen:      EnvStr("ADGUARD_WEB_LISTEN", "127.0.0.1:3000"),
+		AdGuardUpstream:       EnvStr("ADGUARD_UPSTREAM", "1.1.1.1"),
+		AdGuardUpstreamFamily: EnvStr("ADGUARD_UPSTREAM_FAMILY", "1.1.1.2"),
+		AdGuardFilterAdult:    EnvStr("ADGUARD_FILTER_ADULT", "false") == "true",
 	}
 }
 

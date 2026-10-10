@@ -147,7 +147,7 @@ func buildCommands() []*cliCommand {
 		{
 			name:     "policy",
 			subs:     []string{"list", "show", "create", "update", "delete", "assign", "unassign", "export", "apply"},
-			usage:    "policy list | show <group> | create <name> [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off] | update <group> [--name n] [--inter on|off] … | delete <group> | assign <group> <device…> | unassign <device…> | export <file> | apply <file>",
+			usage:    "policy list | show <group> | create <name> [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off] [--adguard on|off] | update <group> [--name n] [--inter on|off] [--adguard on|off] … | delete <group> | assign <group> <device…> | unassign <device…> | export <file> | apply <file>",
 			desc:     "manage policy groups and device membership",
 			run:      cmdPolicy,
 			complete: completePolicy,
@@ -1193,7 +1193,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 		}
 	case "create":
 		if len(args) == 0 {
-			s.errf("usage: policy create <name> [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off]")
+			s.errf("usage: policy create <name> [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off] [--adguard on|off]")
 			return
 		}
 		name := args[0]
@@ -1216,7 +1216,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			paint(ansiDim, "— change them with `policy update "+g.Name+" --wg on …`"))
 	case "update":
 		if len(args) == 0 {
-			s.errf("usage: policy update <group> [--name n] [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off]")
+			s.errf("usage: policy update <group> [--name n] [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off] [--adguard on|off]")
 			return
 		}
 		g, err := a.groupRef(args[0])
@@ -1442,7 +1442,7 @@ func parseRuleSwitches(args []string) (map[string]string, error) {
 				return nil, err
 			}
 			out[flag] = v
-		case "--inter", "--p2p", "--trp", "--wg":
+		case "--inter", "--p2p", "--trp", "--wg", "--adguard", "--dns", "--dns-filter":
 			// Bare switch means enable — also when the next token is another
 			// flag, so `--wg --trp off` is two options, not a bad value.
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
@@ -1481,6 +1481,13 @@ func rulesFromSwitches(switches map[string]string) policy.PolicyGroup {
 	}
 	if v, ok := switches["--wg"]; ok {
 		g.AllowWGAccess = v == "on"
+	}
+	if v, ok := switches["--adguard"]; ok {
+		g.AllowAdGuard = v == "on"
+	} else if v, ok := switches["--dns"]; ok {
+		g.AllowAdGuard = v == "on"
+	} else if v, ok := switches["--dns-filter"]; ok {
+		g.AllowAdGuard = v == "on"
 	}
 	return g
 }
@@ -2070,7 +2077,7 @@ func nodeAge(lastSeen, connectedFor string) string {
 
 func ruleFlags(g *policy.PolicyGroup) string {
 	var b strings.Builder
-	for _, on := range []bool{g.AllowInterDevice, g.AllowP2PMesh, g.AllowTRP, g.AllowWGAccess} {
+	for _, on := range []bool{g.AllowInterDevice, g.AllowP2PMesh, g.AllowTRP, g.AllowWGAccess, g.AllowAdGuard} {
 		if on {
 			b.WriteString(paint(ansiGreen, "y") + " ")
 		} else {
@@ -2147,7 +2154,7 @@ func (a *API) peerConfigText(rec *peers.PeerRecord, host, dns string) string {
 		return ""
 	}
 	if dns == "" {
-		dns = "1.1.1.1"
+		dns = a.dnsForPeer(rec.PublicKey, rec.DeviceID)
 	}
 	if host == "" {
 		host = a.cfg.APIListen
