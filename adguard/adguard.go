@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"runtime"
 	"sync"
 
 	"tanguard/config"
@@ -212,8 +213,9 @@ func (m *Manager) ensureBinary() (string, error) {
 	if st, err := os.Stat(target); err == nil && !st.IsDir() {
 		return target, nil
 	}
-	// download linux amd64
-	url := "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.61/AdGuardHome_linux_amd64.tar.gz"
+	// download for current arch
+	arch := aghArch()
+	url := "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.61/AdGuardHome_linux_" + arch + ".tar.gz"
 	resp, err := http.Get(url)
 	if err != nil {
 		return bin, err
@@ -248,6 +250,23 @@ func (m *Manager) ensureBinary() (string, error) {
 	os.RemoveAll(filepath.Join(m.cfg.AdGuardDataDir, "AdGuardHome"))
 	return target, nil
 }
+
+func aghArch() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "amd64"
+	case "arm64":
+		return "arm64"
+	case "arm":
+		// GOARM may not be defined in some builds; default to armv7
+		return "armv7"
+	case "386":
+		return "386"
+	default:
+		return "amd64"
+	}
+}
+
 
 func copyFile(src, dst string) error {
 	s, err := os.Open(src)
