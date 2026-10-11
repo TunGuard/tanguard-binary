@@ -5,6 +5,22 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.17] - 2026-10-11
+
+### Added
+
+- **AdGuard now protects a phone the moment it is moved into an AdGuard group —
+  no re-import needed.** Previously the filter only applied when a client
+  profile was generated with AdGuard as its DNS server, so a group move did not
+  change the DNS an already-installed phone used and ads kept showing (and
+  moving back out kept the filtered DNS). The server now intercepts the DNS of
+  peers whose policy group allows AdGuard: a `TUNGARD_DNS` iptables chain in the
+  nat table redirects each such peer's port-53 queries (udp and tcp) to the
+  AdGuard listener. Rules are rebuilt after any peer or policy group change, on
+  AdGuard start/stop, after a restore, and at startup, and removed again on
+  shutdown. One limitation: Android's "Private DNS" (DNS-over-HTTPS/TLS) bypasses
+  port-53 interception.
+
 ## [2.4.16] - 2026-10-11
 
 ### Fixed

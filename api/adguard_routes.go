@@ -52,6 +52,7 @@ func (a *API) handleAdGuardStart(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	jsonResp(w, 200, map[string]interface{}{"success": true})
 }
 
@@ -68,6 +69,7 @@ func (a *API) handleAdGuardStop(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	jsonResp(w, 200, map[string]interface{}{"success": true})
 }
 

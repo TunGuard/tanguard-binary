@@ -358,6 +358,16 @@ func (m *Manager) DNSForGroup(groupAllows bool) string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
+// DNSTarget is the address the tunnel DNS redirect should forward port-53
+// queries to. It mirrors what AdGuard actually binds so a redirected query
+// always reaches the listener; empty when AdGuard is disabled.
+func (m *Manager) DNSTarget() string {
+	if !m.cfg.AdGuardEnabled {
+		return ""
+	}
+	return m.bindAddr()
+}
+
 // WebAddr is the loopback address the AdGuard UI is actually bound to. Remote
 // access goes through the authenticated /adguard-ui/ proxy, never this port.
 func (m *Manager) WebAddr() string {

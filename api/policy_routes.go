@@ -239,6 +239,7 @@ func (a *API) handlePolicyGroupCreate(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	logPolicy("created group", g)
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group": g})
 }
@@ -296,6 +297,7 @@ func (a *API) handlePolicyGroupUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	logPolicy("updated group", g)
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group": g})
 }
@@ -309,6 +311,7 @@ func (a *API) handlePolicyGroupDelete(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	log.Printf("[policy] group %s deleted", id)
 	jsonResp(w, 200, map[string]interface{}{"success": true})
 }
@@ -348,6 +351,7 @@ func (a *API) handlePolicyGroupAssign(w http.ResponseWriter, r *http.Request) {
 		name = group.Name
 	}
 	log.Printf("[policy] moved %d device(s) into group %q", len(req.Devices), name)
+	a.SyncAdGuardDNS()
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": req.ID})
 }
 
@@ -388,6 +392,7 @@ func (a *API) handlePolicyDeviceAssign(w http.ResponseWriter, r *http.Request) {
 		name = group.Name
 	}
 	log.Printf("[policy] moved %d client device(s) into group %q", len(req.Devices), name)
+	a.SyncAdGuardDNS()
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": req.ID})
 }
 
@@ -401,6 +406,7 @@ func (a *API) handlePolicyDeviceUnassign(w http.ResponseWriter, r *http.Request)
 		jsonErr(w, 400, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	log.Printf("[policy] returned %d client device(s) to the default group", len(req.Devices))
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": policy.DefaultPolicyGroupID})
 }
@@ -414,6 +420,7 @@ func (a *API) handlePolicyGroupUnassign(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, 400, err.Error())
 		return
 	}
+	a.SyncAdGuardDNS()
 	log.Printf("[policy] returned %d device(s) to the default group", len(req.Devices))
 	jsonResp(w, 200, map[string]interface{}{"success": true, "group_id": policy.DefaultPolicyGroupID})
 }
@@ -438,6 +445,7 @@ func (a *API) handlePolicyGroupApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	log.Printf("[policy] applied: %d custom group(s), %d assigned device(s)", len(groups)-1, members)
+	a.SyncAdGuardDNS()
 	jsonResp(w, 200, map[string]interface{}{
 		"success":      true,
 		"groups":       len(groups) - 1,

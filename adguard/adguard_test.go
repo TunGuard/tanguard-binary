@@ -36,6 +36,19 @@ func TestBindAddrFallsBackWhenTunnelDown(t *testing.T) {
 	}
 }
 
+// TestDNSTargetGating locks that a disabled AdGuard yields no redirect target,
+// so the tunnel DNS redirect is removed rather than aimed at nothing.
+func TestDNSTargetGating(t *testing.T) {
+	m := NewManager(&config.Config{AdGuardEnabled: false, AdGuardDNSListen: "10.100.0.1:53"})
+	if got := m.DNSTarget(); got != "" {
+		t.Fatalf("disabled AdGuard should give no target, got %q", got)
+	}
+	m = NewManager(&config.Config{AdGuardEnabled: true, AdGuardDNSListen: "10.100.0.1:53"})
+	if got := m.DNSTarget(); got == "" {
+		t.Fatalf("enabled AdGuard should give a target")
+	}
+}
+
 // TestEnsureConfigReappliesDNSListener proves an existing AdGuardHome.yaml with
 // an old loopback listener is corrected on start, rather than only on first run.
 func TestEnsureConfigReappliesDNSListener(t *testing.T) {

@@ -1220,6 +1220,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			return
 		}
 		s.printf("\x1b[1;32mgroup %s created\x1b[0m\r\n", g.Name)
+		a.SyncAdGuardDNS()
 		s.printf("  %s %s %s\r\n", paint(ansiDim, "rules:"), ruleFlags(g),
 			paint(ansiDim, "— change them with `policy update "+g.Name+" --wg on …`"))
 	case "update":
@@ -1274,6 +1275,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
+		a.SyncAdGuardDNS()
 		s.printf("\x1b[1;32mgroup %s updated\x1b[0m: %s\r\n", updated.Name, ruleFlags(updated))
 	case "delete":
 		if len(args) != 1 {
@@ -1289,6 +1291,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			s.errf("%s", err)
 			return
 		}
+		a.SyncAdGuardDNS()
 		s.printf("\x1b[33mgroup %s deleted\x1b[0m — its devices returned to default\r\n", g.Name)
 	case "assign":
 		if len(args) < 2 {
@@ -1326,6 +1329,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			}
 		}
 		s.printf("\x1b[32m%d device(s) moved into %s\x1b[0m\r\n", len(keys)+len(deviceIDs), g.Name)
+		a.SyncAdGuardDNS()
 	case "unassign":
 		if len(args) == 0 {
 			s.errf("usage: policy unassign <device...>")
@@ -1357,6 +1361,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 			}
 		}
 		s.printf("\x1b[32m%d device(s) returned to the default group\x1b[0m\r\n", len(keys)+len(deviceIDs))
+		a.SyncAdGuardDNS()
 	case "export":
 		if len(args) != 1 {
 			s.errf("usage: policy export <file>")
@@ -1421,6 +1426,7 @@ func cmdPolicy(s *consoleSession, args []string) {
 		}
 		s.printf("\x1b[32mapplied %d group(s), %d assigned device(s)\x1b[0m — policy %s\r\n",
 			groups, members, state(map[bool]string{true: "active", false: "inactive"}[a.policies.IsActive()]))
+		a.SyncAdGuardDNS()
 	default:
 		s.errf("usage: %s", lookupCommand("policy").usage)
 	}
@@ -1956,6 +1962,7 @@ func cmdAdGuard(s *consoleSession, args []string) {
 			s.errf("start adguard: %s", err)
 			return
 		}
+		a.SyncAdGuardDNS()
 		s.okf("adguard started at %s", a.adg.WebAddr())
 	case "stop":
 		if !a.adg.IsRunning() {
@@ -1966,6 +1973,7 @@ func cmdAdGuard(s *consoleSession, args []string) {
 			s.errf("stop adguard: %s", err)
 			return
 		}
+		a.SyncAdGuardDNS()
 		s.okf("adguard stopped")
 	case "config":
 		s.stat("enabled", fmt.Sprintf("%t", a.cfg.AdGuardEnabled))

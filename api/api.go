@@ -43,18 +43,20 @@ type API struct {
 	trp  *trp.TRPManager
 	dom  *domain.Manager
 	adg  *adguard.Manager
+	dns  *wg.DNSRedirect
 	ipMu sync.Mutex
 }
 
-func NewAPI(wg *wg.WgServer, store *peers.PeerStore, cfg *config.Config, creds *auth.CredentialStore, apiKeys *auth.APIKeyStore, monitor *wg.PeerMonitor) *API {
+func NewAPI(wgSrv *wg.WgServer, store *peers.PeerStore, cfg *config.Config, creds *auth.CredentialStore, apiKeys *auth.APIKeyStore, monitor *wg.PeerMonitor) *API {
 	return &API{
-		wg:       wg,
+		wg:       wgSrv,
 		store:    store,
 		cfg:      cfg,
 		creds:    creds,
 		apiKey:   apiKeys,
 		monitor:  monitor,
 		policies: policy.NewPolicyStore(cfg.DataDir),
+		dns:      wg.NewDNSRedirect(cfg),
 	}
 }
 
@@ -98,6 +100,29 @@ func (a *API) SetAdGuard(ag *adguard.Manager) {
 	}
 	a.adg = ag
 	a.syncAdGuardAuth()
+}
+
+// SyncAdGuardDNS rebuilds the tunnel DNS redirect for peers in AdGuard-enabled
+// groups. It runs after a group or peer change could alter who is filtered, and
+// after AdGuard starts or stops. With no WireGuard server (mesh-only mode) it
+// does nothing, because there is no tunnel to redirect.
+func (a *API) SyncAdGuardDNS() {
+	if a == nil || a.wg == nil || a.dns == nil {
+		return
+	}
+	target := ""
+	if a.adg != nil && a.adg.IsRunning() {
+		target = a.adg.DNSTarget()
+	}
+	a.dns.Sync(a.policies, a.store, target)
+}
+
+// CleanupAdGuardDNS removes the tunnel DNS redirect rules on shutdown.
+func (a *API) CleanupAdGuardDNS() {
+	if a == nil || a.dns == nil {
+		return
+	}
+	a.dns.Cleanup()
 }
 
 // trpLookup resolves a TRP mapping reference (full id or unique id prefix) to
@@ -606,6 +631,8 @@ func (a *API) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[api] peer added: %s -> %s (device=%s)", peers.ShortKey(req.PublicKey), req.AllowedIP, req.DeviceID)
 
+	a.SyncAdGuardDNS()
+
 	jsonResp(w, 200, map[string]interface{}{
 		"success":    true,
 		"public_key": req.PublicKey,
@@ -648,6 +675,8 @@ func (a *API) handlePeerRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[api] peer removed: %s", peers.ShortKey(req.PublicKey))
+
+	a.SyncAdGuardDNS()
 
 	jsonResp(w, 200, map[string]interface{}{
 		"success":    true,
@@ -777,6 +806,7 @@ func (a *API) handleGenerateConfig(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[api] WARNING: failed to persist peer: %v", err)
 	}
 	a.ipMu.Unlock()
+	a.SyncAdGuardDNS()
 
 	interfaceIP := strings.TrimSuffix(req.AllowedIP, "/32")
 	pub := a.wg.PublicKey()

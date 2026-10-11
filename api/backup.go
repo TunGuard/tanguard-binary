@@ -261,6 +261,7 @@ func (a *API) importBackup(src io.Reader) (map[string]interface{}, error) {
 	if err := a.apiKey.Load(); err != nil {
 		log.Printf("[backup] WARNING: reload API key after restore: %v", err)
 	}
+	a.SyncAdGuardDNS()
 
 	return map[string]interface{}{
 		"success":           true,

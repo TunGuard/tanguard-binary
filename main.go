@@ -197,6 +197,7 @@ func runMeshOnly(cfg *config.Config) {
 	apiSrv.SetMesh(hub, trpMgr)
 	apiSrv.SetDomain(startDomain(cfg))
 	apiSrv.SetAdGuard(startAdGuard(cfg, creds))
+	apiSrv.SyncAdGuardDNS()
 	go apiSrv.Start()
 	logDashboard(cfg, creds)
 
@@ -305,6 +306,7 @@ func main() {
 	apiSrv.SetMesh(hub, trpMgr)
 	apiSrv.SetDomain(startDomain(cfg))
 	apiSrv.SetAdGuard(startAdGuard(cfg, creds))
+	apiSrv.SyncAdGuardDNS()
 	go apiSrv.Start()
 
 	if cfg.WebEnabled {
@@ -341,6 +343,7 @@ func main() {
 	sig := <-sigCh
 	log.Printf("[main] received %s, shutting down...", sig)
 
+	apiSrv.CleanupAdGuardDNS()
 	wg.CleanupNAT(cfg)
 	wgSrv.Close()
 	store.Save()
