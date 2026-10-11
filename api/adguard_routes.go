@@ -9,6 +9,9 @@ func registerAdGuardRoutes(mux *http.ServeMux, a *API) {
 	mux.Handle("/api/adguard/start", a.requireAPI(a.handleAdGuardStart))
 	mux.Handle("/api/adguard/stop", a.requireAPI(a.handleAdGuardStop))
 	mux.Handle("/api/adguard/config", a.requireAPI(a.handleAdGuardConfig))
+	// The admin UI is proxied through the dashboard login so the AdGuard port
+	// stays on loopback and is never anonymously reachable.
+	mux.Handle(adguardUIPrefix+"/", a.requireDashboardAuth(a.handleAdGuardUI))
 }
 
 func (a *API) requireAdGuard(w http.ResponseWriter) bool {
@@ -75,9 +78,9 @@ func (a *API) handleAdGuardConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	// For now, return current config state
 	jsonResp(w, 200, map[string]interface{}{
-		"enabled": a.cfg.AdGuardEnabled,
-		"dns":     a.cfg.AdGuardDNSListen,
-		"web":     a.cfg.AdGuardWebListen,
+		"enabled":  a.cfg.AdGuardEnabled,
+		"dns":      a.cfg.AdGuardDNSListen,
+		"web":      a.cfg.AdGuardWebListen,
 		"upstream": a.cfg.AdGuardUpstream,
 		"family":   a.cfg.AdGuardUpstreamFamily,
 		"adult":    a.cfg.AdGuardFilterAdult,

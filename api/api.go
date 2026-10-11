@@ -90,14 +90,15 @@ func (a *API) SetDomain(dom *domain.Manager) {
 	}
 }
 
-// SetAdGuard attaches the AdGuard Home manager.
+// SetAdGuard attaches the AdGuard Home manager and mirrors the dashboard login
+// onto it, so its UI is protected by the same credentials.
 func (a *API) SetAdGuard(ag *adguard.Manager) {
 	if a == nil {
 		return
 	}
 	a.adg = ag
+	a.syncAdGuardAuth()
 }
-
 
 // trpLookup resolves a TRP mapping reference (full id or unique id prefix) to
 // the local address the mapping listens on. A domain proxies to that address,
@@ -318,6 +319,15 @@ func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 	if err := a.creds.Set(req.Username, req.Password); err != nil {
 		jsonErr(w, 500, "failed to save credentials: "+err.Error())
 		return
+	}
+
+	// Keep AdGuard's admin login in step with the dashboard, restarting it so
+	// the new hash in AdGuardHome.yaml takes effect.
+	a.syncAdGuardAuth()
+	if a.adg != nil && a.adg.IsRunning() {
+		if err := a.adg.Restart(); err != nil {
+			log.Printf("[api] WARNING: could not restart AdGuard Home after credential change: %v", err)
+		}
 	}
 
 	log.Printf("[api] web dashboard credentials updated for user %q", req.Username)
@@ -868,7 +878,6 @@ func (a *API) dnsForPeer(pubKey string, deviceID string) string {
 	}
 	return "1.1.1.1"
 }
-
 
 func (a *API) nextAvailableIP() (net.IP, error) {
 	_, ipnet, err := net.ParseCIDR(a.cfg.Subnet)

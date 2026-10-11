@@ -188,6 +188,22 @@ default and does nothing until the first mapping is added; disable it with
 `DOMAIN_ENABLED=false`. Ports are configurable with `DOMAIN_HTTP_PORT`,
 `DOMAIN_HTTPS_PORT` and `DOMAIN_CHALLENGE_PORT`.
 
+## AdGuard Home
+
+```bash
+adguard status     # state, DNS/Web listen addresses, upstream, adult filter
+adguard start      # launch the managed AdGuard Home instance
+adguard stop       # stop it
+adguard config     # binary, data dir and all ADGUARD_* settings
+```
+
+AdGuard Home is an optional DNS filtering service TunGuard manages for you.
+It starts automatically when `ADGUARD_ENABLED=true` (the default) and is
+tuned with the `ADGUARD_*` environment variables. Give a policy group the
+AdGuard capability (`policy create Staff --adguard on`) to push filtered DNS
+to its clients; the group's configs then point at AdGuard instead of the
+default resolver.
+
 ## Policy groups
 
 ```bash

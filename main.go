@@ -9,10 +9,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"tanguard/adguard"
 	"tanguard/api"
 	"tanguard/auth"
 	"tanguard/config"
-	"tanguard/adguard"
 	"tanguard/domain"
 	"tanguard/p2p"
 	"tanguard/peers"
@@ -127,17 +127,25 @@ func startMesh(cfg *config.Config, policies *policy.PolicyStore, store *peers.Pe
 	return hub, trpMgr
 }
 
-// startAdGuard boots the AdGuard Home instance when enabled.
-func startAdGuard(cfg *config.Config) *adguard.Manager {
+// startAdGuard boots the AdGuard Home instance when enabled. The AdGuard admin
+// login mirrors the TunGuard dashboard login, so its UI is never anonymous.
+func startAdGuard(cfg *config.Config, creds *auth.CredentialStore) *adguard.Manager {
 	if !cfg.AdGuardEnabled {
 		return nil
 	}
 	ag := adguard.NewManager(cfg)
+	if creds != nil {
+		if user, hash, err := creds.EffectiveHash(cfg.WebUsername, cfg.WebPassword); err == nil {
+			ag.SetAuth(user, hash)
+		} else {
+			log.Printf("[main] WARNING: could not derive AdGuard login: %v", err)
+		}
+	}
 	if err := ag.Start(); err != nil {
 		log.Printf("[main] WARNING: could not start AdGuard Home: %v", err)
 		return nil
 	}
-	log.Printf("[main] adguard home running at %s", ag.WebAddr())
+	log.Printf("[main] adguard home running at %s (admin UI via /adguard-ui/)", ag.WebAddr())
 	return ag
 }
 
@@ -188,7 +196,7 @@ func runMeshOnly(cfg *config.Config) {
 	apiSrv.SetPolicy(policies)
 	apiSrv.SetMesh(hub, trpMgr)
 	apiSrv.SetDomain(startDomain(cfg))
-	apiSrv.SetAdGuard(startAdGuard(cfg))
+	apiSrv.SetAdGuard(startAdGuard(cfg, creds))
 	go apiSrv.Start()
 	logDashboard(cfg, creds)
 
@@ -296,7 +304,7 @@ func main() {
 	apiSrv.SetPolicy(policies)
 	apiSrv.SetMesh(hub, trpMgr)
 	apiSrv.SetDomain(startDomain(cfg))
-	apiSrv.SetAdGuard(startAdGuard(cfg))
+	apiSrv.SetAdGuard(startAdGuard(cfg, creds))
 	go apiSrv.Start()
 
 	if cfg.WebEnabled {

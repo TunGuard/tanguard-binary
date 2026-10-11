@@ -1,5 +1,7 @@
 tanguard
 tanguard.exe
+tunguard
+tunguard.exe
 peers.json
 nodes.json
 policy_groups.json
@@ -13,3 +15,5 @@ api_key.json
 *.log
 .DS_Store
 adguardhome
+AdGuardHome.yaml
+adguardhome.tar.gz

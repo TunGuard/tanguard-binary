@@ -145,6 +145,14 @@ func buildCommands() []*cliCommand {
 			complete: completeDomain,
 		},
 		{
+			name:     "adguard",
+			subs:     []string{"status", "start", "stop", "config"},
+			usage:    "adguard [status] | adguard start | adguard stop | adguard config",
+			desc:     "control the managed AdGuard Home DNS filtering service",
+			run:      cmdAdGuard,
+			complete: completeAdGuard,
+		},
+		{
 			name:     "policy",
 			subs:     []string{"list", "show", "create", "update", "delete", "assign", "unassign", "export", "apply"},
 			usage:    "policy list | show <group> | create <name> [--inter on|off] [--p2p on|off] [--trp on|off] [--wg on|off] [--adguard on|off] | update <group> [--name n] [--inter on|off] [--adguard on|off] … | delete <group> | assign <group> <device…> | unassign <device…> | export <file> | apply <file>",
@@ -1903,6 +1911,80 @@ func completePolicy(s *consoleSession, rest []string) []string {
 			names = append(names, info.label())
 		}
 		return names
+	}
+	return nil
+}
+
+// ─── adguard ─────────────────────────────────────────────────────────────
+
+func cmdAdGuard(s *consoleSession, args []string) {
+	a := s.api
+	if a.adg == nil {
+		s.errf("adguard is not configured (set ADGUARD_ENABLED=true)")
+		return
+	}
+	verb := "status"
+	if len(args) > 0 {
+		verb = args[0]
+	}
+	switch verb {
+	case "status", "":
+		stateText := "disabled"
+		if a.cfg.AdGuardEnabled {
+			if a.adg.IsRunning() {
+				stateText = "running"
+			} else {
+				stateText = "enabled (stopped)"
+			}
+		}
+		s.stat("status", state(stateText))
+		s.stat("dns listen", a.cfg.AdGuardDNSListen)
+		s.stat("web ui", a.adg.WebAddr())
+		s.stat("upstream", a.cfg.AdGuardUpstream)
+		if a.cfg.AdGuardFilterAdult {
+			s.stat("adult filter", "on ("+a.cfg.AdGuardUpstreamFamily+")")
+		} else {
+			s.stat("adult filter", "off")
+		}
+		s.notef("assign AdGuard to a policy group to push filtered DNS to its clients")
+	case "start":
+		if a.adg.IsRunning() {
+			s.notef("adguard already running at " + a.adg.WebAddr())
+			return
+		}
+		if err := a.adg.Start(); err != nil {
+			s.errf("start adguard: %s", err)
+			return
+		}
+		s.okf("adguard started at %s", a.adg.WebAddr())
+	case "stop":
+		if !a.adg.IsRunning() {
+			s.notef("adguard is not running")
+			return
+		}
+		if err := a.adg.Stop(); err != nil {
+			s.errf("stop adguard: %s", err)
+			return
+		}
+		s.okf("adguard stopped")
+	case "config":
+		s.stat("enabled", fmt.Sprintf("%t", a.cfg.AdGuardEnabled))
+		s.stat("binary", a.cfg.AdGuardBinaryPath)
+		s.stat("data dir", a.cfg.AdGuardDataDir)
+		s.stat("dns listen", a.cfg.AdGuardDNSListen)
+		s.stat("web listen", a.cfg.AdGuardWebListen)
+		s.stat("upstream", a.cfg.AdGuardUpstream)
+		s.stat("family upstream", a.cfg.AdGuardUpstreamFamily)
+		s.stat("adult filter", fmt.Sprintf("%t", a.cfg.AdGuardFilterAdult))
+		s.notef("change these with the ADGUARD_* environment variables")
+	default:
+		s.errf("usage: %s", lookupCommand("adguard").usage)
+	}
+}
+
+func completeAdGuard(s *consoleSession, rest []string) []string {
+	if len(rest) == 1 {
+		return []string{"status", "start", "stop", "config"}
 	}
 	return nil
 }

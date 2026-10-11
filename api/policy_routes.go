@@ -194,13 +194,14 @@ func (a *API) handlePolicyGroups(w http.ResponseWriter, r *http.Request) {
 
 // policyRules is the shared rule payload for create and update. The switches
 // are pointers so "absent" stays distinguishable from false: an update that
-// only changes one rule must not silently clear the other three.
+// only changes one rule must not silently clear the others.
 type policyRules struct {
 	Name             string `json:"name"`
 	AllowInterDevice *bool  `json:"allow_inter_device,omitempty"`
 	AllowP2PMesh     *bool  `json:"allow_p2p_mesh,omitempty"`
 	AllowTRP         *bool  `json:"allow_trp,omitempty"`
 	AllowWGAccess    *bool  `json:"allow_wg_access,omitempty"`
+	AllowAdGuard     *bool  `json:"allow_adguard,omitempty"`
 }
 
 // apply produces a group carrying exactly the switches that were sent, which
@@ -219,6 +220,9 @@ func (r policyRules) apply() policy.PolicyGroup {
 	}
 	if r.AllowWGAccess != nil {
 		g.AllowWGAccess = *r.AllowWGAccess
+	}
+	if r.AllowAdGuard != nil {
+		g.AllowAdGuard = *r.AllowAdGuard
 	}
 	return g
 }
@@ -280,6 +284,11 @@ func (a *API) handlePolicyGroupUpdate(w http.ResponseWriter, r *http.Request) {
 		next.AllowWGAccess = &current.AllowWGAccess
 	} else {
 		next.AllowWGAccess = req.AllowWGAccess
+	}
+	if req.AllowAdGuard == nil {
+		next.AllowAdGuard = &current.AllowAdGuard
+	} else {
+		next.AllowAdGuard = req.AllowAdGuard
 	}
 
 	g, err := a.policies.Update(req.ID, next.apply())

@@ -251,6 +251,48 @@ func TestPolicyAPIUpdateKeepsUnmentionedRules(t *testing.T) {
 	}
 }
 
+// TestPolicyAPIUpdateTogglesAdGuard guards the fifth rule switch. It was left
+// out of the API payload struct, so the toggle reported success but the value
+// never reached the store and flipped straight back on reload.
+func TestPolicyAPIUpdateTogglesAdGuard(t *testing.T) {
+	base, _, _ := policyAPIServer(t)
+
+	_, out := policyCall(t, base, "POST", "/api/policy/group/create", `{"name":"Kids"}`)
+	id := out["group"].(map[string]interface{})["id"].(string)
+
+	code, out := policyCall(t, base, "POST", "/api/policy/group/update",
+		`{"id":"`+id+`","allow_adguard":true}`)
+	if code != 200 {
+		t.Fatalf("update: got %d (%v)", code, out)
+	}
+	g := out["group"].(map[string]interface{})
+	if g["allow_adguard"] != true {
+		t.Fatalf("allow_adguard must be applied, got %v", g["allow_adguard"])
+	}
+
+	// It must survive a reload, and turning it back off must stick too.
+	_, out = policyCall(t, base, "GET", "/api/policy/groups", "")
+	for _, gi := range out["groups"].([]interface{}) {
+		m := gi.(map[string]interface{})
+		if m["id"] == id && m["allow_adguard"] != true {
+			t.Fatalf("allow_adguard did not persist, got %v", m["allow_adguard"])
+		}
+	}
+	// false is omitted from the JSON (omitempty), so absence means off.
+	if code, out := policyCall(t, base, "POST", "/api/policy/group/update",
+		`{"id":"`+id+`","allow_adguard":false}`); code != 200 ||
+		out["group"].(map[string]interface{})["allow_adguard"] != nil {
+		t.Fatalf("disabling allow_adguard failed: %d %v", code, out)
+	}
+	_, out = policyCall(t, base, "GET", "/api/policy/groups", "")
+	for _, gi := range out["groups"].([]interface{}) {
+		m := gi.(map[string]interface{})
+		if m["id"] == id && m["allow_adguard"] != nil {
+			t.Fatalf("allow_adguard did not clear on reload, got %v", m["allow_adguard"])
+		}
+	}
+}
+
 func TestPolicyAPIRejectsBadInput(t *testing.T) {
 	base, _, _ := policyAPIServer(t)
 

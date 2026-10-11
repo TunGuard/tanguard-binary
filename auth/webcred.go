@@ -66,6 +66,33 @@ func (s *CredentialStore) Username() (string, bool) {
 	return s.creds.Username, true
 }
 
+// Hash returns the stored username and bcrypt hash, if custom credentials have
+// been set. The hash is exactly what the dashboard verifies against, so another
+// service can accept the same login without ever seeing the plaintext.
+func (s *CredentialStore) Hash() (username, hash string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.creds == nil {
+		return "", "", false
+	}
+	return s.creds.Username, s.creds.PasswordHash, true
+}
+
+// EffectiveHash returns the username and bcrypt hash representing the current
+// dashboard login: the stored custom credentials when present, otherwise a hash
+// of the configured fallback password. It lets the AdGuard instance mirror the
+// dashboard login.
+func (s *CredentialStore) EffectiveHash(fallbackUser, fallbackPass string) (string, string, error) {
+	if user, hash, ok := s.Hash(); ok {
+		return user, hash, nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(fallbackPass), bcrypt.DefaultCost)
+	if err != nil {
+		return "", "", fmt.Errorf("hash fallback password: %w", err)
+	}
+	return fallbackUser, string(hash), nil
+}
+
 // Verify checks a username/password against the stored credentials.
 // The returned bool reports whether custom credentials are in effect.
 func (s *CredentialStore) Verify(username, password string) (valid, custom bool) {

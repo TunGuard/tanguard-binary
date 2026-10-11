@@ -1,56 +1,56 @@
 package adguard
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"tanguard/config"
 )
 
 type Manager struct {
-	mu     sync.Mutex
-	cfg    *config.Config
-	cmd    *exec.Cmd
+	mu      sync.Mutex
+	cfg     *config.Config
+	cmd     *exec.Cmd
+	done    chan struct{}
 	running bool
-}
 
-type adguardConfig struct {
-	BindHost      string   `json:"bind_host,omitempty"`
-	BindPort      int      `json:"bind_port,omitempty"`
-	DNS           dnsConf  `json:"dns"`
-	Filtering     filterConf `json:"filtering"`
-	SchemaVersion int      `json:"schema_version,omitempty"`
-
-	// AdGuard Home v0.107+ uses YAML/structured config with 'http' block
-	HTTP *httpConf `json:"http,omitempty"`
-}
-
-type httpConf struct {
-	Address string `json:"address,omitempty"`
-}
-
-type dnsConf struct {
-	BindHosts []string `json:"bind_hosts"`
-	Port      int      `json:"port"`
-	UpstreamDNS []string `json:"upstream_dns"`
-	EnableDNSSEC bool   `json:"enable_dnssec"`
-}
-
-type filterConf struct {
-	ProtectionEnabled bool `json:"protection_enabled"`
+	// adminUser/adminHash mirror the TunGuard dashboard login onto the AdGuard
+	// web UI so it is never left without authentication.
+	adminUser string
+	adminHash string
 }
 
 func NewManager(cfg *config.Config) *Manager {
 	return &Manager{cfg: cfg}
+}
+
+// SetAuth records the login the AdGuard UI must require. The hash is a bcrypt
+// hash (as stored for the dashboard); the plaintext is never needed.
+func (m *Manager) SetAuth(user, hash string) {
+	m.mu.Lock()
+	m.adminUser = user
+	m.adminHash = hash
+	m.mu.Unlock()
+}
+
+// loopbackWebAddr forces the AdGuard admin UI onto loopback and keeps only the
+// configured port. The UI is reached through TunGuard's authenticated reverse
+// proxy, so the port itself must never be exposed to the network.
+func (m *Manager) loopbackWebAddr() string {
+	_, port, err := parseListen(m.cfg.AdGuardWebListen)
+	if err != nil || port == 0 {
+		return "127.0.0.1:1116"
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
 func (m *Manager) binaryPath() string {
@@ -77,9 +77,17 @@ func (m *Manager) binaryPath() string {
 	cands = append(cands, "/usr/local/bin/adguardhome", "/usr/bin/adguardhome")
 	for _, c := range cands {
 		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			// Return an absolute path: exec.Command resolves a bare name
+			// through $PATH, so a file found in the working directory would
+			// still fail to launch otherwise.
+			if abs, err := filepath.Abs(c); err == nil {
+				return abs
+			}
 			return c
 		}
 	}
+	// Nothing on disk: fall back to the configured name. ensureBinary will
+	// download an absolute path into the data dir.
 	return p
 }
 
@@ -116,36 +124,77 @@ func netSplit(a string) (string, string, error) {
 	return a[:i], a[i+1:], nil
 }
 
+// ensureConfig writes the AdGuardHome.yaml AdGuard needs to run, and re-applies
+// the two things this server owns: the admin login (mirrored from the dashboard)
+// and the loopback-only web address. Everything else in an existing file is
+// preserved, because AdGuard rewrites this file itself as settings change.
 func (m *Manager) ensureConfig() error {
 	cp := m.configPath()
-	if st, err := os.Stat(cp); err == nil && !st.IsDir() {
-		// already exists - could update, but keep simple
-		return nil
+
+	var doc map[string]interface{}
+	if data, err := os.ReadFile(cp); err == nil {
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			// An unreadable config must not silently become an anonymous one.
+			return fmt.Errorf("parse %s: %w", cp, err)
+		}
 	}
-	_, _, err := parseListen(m.cfg.AdGuardWebListen)
-	if err != nil {
-		return err
+	if doc == nil {
+		doc = map[string]interface{}{}
 	}
-	dnsHost, dnsPort, err := parseListen(m.cfg.AdGuardDNSListen)
-	if err != nil {
-		return err
+
+	// AdGuard Home v0.107+ uses the structured config with an 'http' block;
+	// 'address' is the current field name (not bind_host/bind_port).
+	httpBlock, _ := doc["http"].(map[string]interface{})
+	if httpBlock == nil {
+		httpBlock = map[string]interface{}{}
 	}
-	upstreams := []string{m.cfg.AdGuardUpstream}
-	if m.cfg.AdGuardFilterAdult && m.cfg.AdGuardUpstreamFamily != "" {
-		upstreams = []string{m.cfg.AdGuardUpstreamFamily}
+	httpBlock["address"] = m.loopbackWebAddr()
+	doc["http"] = httpBlock
+
+	// Seed the DNS listener and a protective default on first run only.
+	if _, ok := doc["dns"]; !ok {
+		dnsHost, dnsPort, err := parseListen(m.cfg.AdGuardDNSListen)
+		if err != nil {
+			return err
+		}
+		upstreams := []string{m.cfg.AdGuardUpstream}
+		if m.cfg.AdGuardFilterAdult && m.cfg.AdGuardUpstreamFamily != "" {
+			upstreams = []string{m.cfg.AdGuardUpstreamFamily}
+		}
+		doc["dns"] = map[string]interface{}{
+			"bind_hosts":    []string{dnsHost},
+			"port":          dnsPort,
+			"upstream_dns":  upstreams,
+			"enable_dnssec": false,
+		}
 	}
-	cfg := adguardConfig{
-		SchemaVersion: 27,
-		DNS: dnsConf{
-			BindHosts:    []string{dnsHost},
-			Port:         dnsPort,
-			UpstreamDNS:  upstreams,
-			EnableDNSSEC: false,
-		},
-		Filtering: filterConf{ProtectionEnabled: true},
-		HTTP:      &httpConf{Address: m.cfg.AdGuardWebListen},
+	if _, ok := doc["filtering"]; !ok {
+		doc["filtering"] = map[string]interface{}{"protection_enabled": true}
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	if _, ok := doc["schema_version"]; !ok {
+		doc["schema_version"] = 27
+	}
+
+	// Mirror the dashboard login so the UI can never be reached without it.
+	// Any other AdGuard user accounts are kept, with the managed one first.
+	if m.adminHash != "" {
+		users := []interface{}{map[string]interface{}{
+			"name":     m.adminUser,
+			"password": m.adminHash,
+		}}
+		if existing, ok := doc["users"].([]interface{}); ok {
+			for _, u := range existing {
+				um, ok := u.(map[string]interface{})
+				if ok && um["name"] == m.adminUser {
+					continue
+				}
+				users = append(users, u)
+			}
+		}
+		doc["users"] = users
+	}
+
+	data, err := yaml.Marshal(doc)
 	if err != nil {
 		return err
 	}
@@ -165,38 +214,80 @@ func (m *Manager) Start() error {
 	if err != nil {
 		return fmt.Errorf("adguardhome binary not available: %w", err)
 	}
+	// exec.Command looks a bare name up in $PATH, so always launch an
+	// absolute path — otherwise a binary sitting next to this process (or in
+	// the data dir) is found but never runs.
+	if !filepath.IsAbs(bin) {
+		if abs, aerr := filepath.Abs(bin); aerr == nil {
+			bin = abs
+		}
+	}
 	if err := m.ensureConfig(); err != nil {
 		return err
 	}
-	wd := filepath.Dir(m.configPath())
+	cp := m.configPath()
+	if abs, aerr := filepath.Abs(cp); aerr == nil {
+		cp = abs
+	}
+	wd := filepath.Dir(cp)
 	if wd == "" {
 		wd = "."
 	}
-	m.cmd = exec.Command(bin, "--no-check-update", "-c", m.configPath(), "-w", wd)
-	m.cmd.Dir = wd
-	if err := m.cmd.Start(); err != nil {
+	cmd := exec.Command(bin, "--no-check-update", "-c", cp, "-w", wd)
+	cmd.Dir = wd
+	if err := cmd.Start(); err != nil {
 		return err
 	}
+	m.cmd = cmd
 	m.running = true
+	done := make(chan struct{})
+	m.done = done
+	// The watcher must only clear state for the process it started: after a
+	// restart the previous process exits and would otherwise clobber the new
+	// one, reporting a running server as stopped.
 	go func() {
-		_ = m.cmd.Wait()
+		_ = cmd.Wait()
 		m.mu.Lock()
-		m.running = false
-		m.cmd = nil
+		if m.cmd == cmd {
+			m.running = false
+			m.cmd = nil
+		}
 		m.mu.Unlock()
+		close(done)
 	}()
 	return nil
 }
 
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.cmd != nil && m.cmd.Process != nil {
-		_ = m.cmd.Process.Kill()
-	}
-	m.running = false
+	cmd := m.cmd
+	done := m.done
 	m.cmd = nil
+	m.running = false
+	m.mu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	_ = cmd.Process.Kill()
+	// Wait for the process to actually exit so a following Start can rebind
+	// the port without racing the dying instance.
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	}
 	return nil
+}
+
+// Restart stops and starts AdGuard so it re-reads AdGuardHome.yaml. It is used
+// when the dashboard login changes, because AdGuard only reads the admin users
+// at startup.
+func (m *Manager) Restart() error {
+	if err := m.Stop(); err != nil {
+		return err
+	}
+	return m.Start()
 }
 
 func (m *Manager) IsRunning() bool {
@@ -216,11 +307,10 @@ func (m *Manager) DNSForGroup(groupAllows bool) string {
 	return ""
 }
 
+// WebAddr is the loopback address the AdGuard UI is actually bound to. Remote
+// access goes through the authenticated /adguard-ui/ proxy, never this port.
 func (m *Manager) WebAddr() string {
-	if m.cfg.AdGuardWebListen == "" {
-		return "127.0.0.1:1116"
-	}
-	return m.cfg.AdGuardWebListen
+	return m.loopbackWebAddr()
 }
 
 func (m *Manager) ensureBinary() (string, error) {
@@ -232,6 +322,9 @@ func (m *Manager) ensureBinary() (string, error) {
 	}
 	// try to download to data dir if configured
 	target := filepath.Join(m.cfg.AdGuardDataDir, "adguardhome")
+	if abs, err := filepath.Abs(target); err == nil {
+		target = abs
+	}
 	if st, err := os.Stat(target); err == nil && !st.IsDir() {
 		return target, nil
 	}
@@ -257,7 +350,7 @@ func (m *Manager) ensureBinary() (string, error) {
 	// download for current arch
 	arch := aghArch()
 	url := "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.61/AdGuardHome_linux_" + arch + ".tar.gz"
-	client := &http.Client{Timeout: 60*time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		return bin, err
@@ -312,7 +405,6 @@ func aghArch() string {
 		return "amd64"
 	}
 }
-
 
 func copyFile(src, dst string) error {
 	s, err := os.Open(src)
