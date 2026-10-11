@@ -197,7 +197,7 @@ func (m *Manager) DNSForGroup(groupAllows bool) string {
 
 func (m *Manager) WebAddr() string {
 	if m.cfg.AdGuardWebListen == "" {
-		return "127.0.0.1:3000"
+		return "127.0.0.1:1116"
 	}
 	return m.cfg.AdGuardWebListen
 }
