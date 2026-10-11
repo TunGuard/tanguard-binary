@@ -11,6 +11,7 @@ import (
 	"strings"
 	"runtime"
 	"sync"
+	"time"
 
 	"tanguard/config"
 )
@@ -216,9 +217,14 @@ func (m *Manager) ensureBinary() (string, error) {
 	// download for current arch
 	arch := aghArch()
 	url := "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.61/AdGuardHome_linux_" + arch + ".tar.gz"
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 60*time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return bin, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return bin, fmt.Errorf("download failed: %s", resp.Status)
 	}
 	defer resp.Body.Close()
 	// save tar.gz
@@ -235,7 +241,7 @@ func (m *Manager) ensureBinary() (string, error) {
 	// extract
 	cmd := exec.Command("tar", "-xzf", tgz, "-C", m.cfg.AdGuardDataDir)
 	if err := cmd.Run(); err != nil {
-		return bin, err
+		return "", err
 	}
 	// move
 	src := filepath.Join(m.cfg.AdGuardDataDir, "AdGuardHome", "AdGuardHome")
