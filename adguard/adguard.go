@@ -24,11 +24,18 @@ type Manager struct {
 }
 
 type adguardConfig struct {
-	BindHost       string   `json:"bind_host"`
-	BindPort       int      `json:"bind_port"`
-	DNS            dnsConf  `json:"dns"`
-	Filtering      filterConf `json:"filtering"`
-	SchemaVersion  int      `json:"schema_version"`
+	BindHost      string   `json:"bind_host,omitempty"`
+	BindPort      int      `json:"bind_port,omitempty"`
+	DNS           dnsConf  `json:"dns"`
+	Filtering     filterConf `json:"filtering"`
+	SchemaVersion int      `json:"schema_version,omitempty"`
+
+	// AdGuard Home v0.107+ uses YAML/structured config with 'http' block
+	HTTP *httpConf `json:"http,omitempty"`
+}
+
+type httpConf struct {
+	Address string `json:"address,omitempty"`
 }
 
 type dnsConf struct {
@@ -51,8 +58,23 @@ func (m *Manager) binaryPath() string {
 	if filepath.IsAbs(p) {
 		return p
 	}
-	// try relative to cwd or data dir
+	// try relative to cwd, data dir, and executable directory
 	cands := []string{p, filepath.Join(m.cfg.AdGuardDataDir, p), filepath.Join(".", p)}
+	// also try relative to the running binary's dir
+	if exe, err := os.Executable(); err == nil {
+		cands = append(cands, filepath.Join(filepath.Dir(exe), p))
+		cands = append(cands, filepath.Join(filepath.Dir(exe), filepath.Base(p)))
+	}
+	// also try common names
+	cands = append(cands, "adguardhome")
+	cands = append(cands, filepath.Join(m.cfg.AdGuardDataDir, "adguardhome"))
+	// also try dirs near binary
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		cands = append(cands, filepath.Join(dir, "adguardhome"))
+		cands = append(cands, filepath.Join(filepath.Dir(dir), "adguardhome"))
+	}
+	cands = append(cands, "/usr/local/bin/adguardhome", "/usr/bin/adguardhome")
 	for _, c := range cands {
 		if st, err := os.Stat(c); err == nil && !st.IsDir() {
 			return c
@@ -100,7 +122,7 @@ func (m *Manager) ensureConfig() error {
 		// already exists - could update, but keep simple
 		return nil
 	}
-	host, port, err := parseListen(m.cfg.AdGuardWebListen)
+	_, _, err := parseListen(m.cfg.AdGuardWebListen)
 	if err != nil {
 		return err
 	}
@@ -113,16 +135,15 @@ func (m *Manager) ensureConfig() error {
 		upstreams = []string{m.cfg.AdGuardUpstreamFamily}
 	}
 	cfg := adguardConfig{
-		BindHost:      host,
-		BindPort:      port,
 		SchemaVersion: 27,
 		DNS: dnsConf{
-			BindHosts: []string{dnsHost},
-			Port:      dnsPort,
-			UpstreamDNS: upstreams,
+			BindHosts:    []string{dnsHost},
+			Port:         dnsPort,
+			UpstreamDNS:  upstreams,
 			EnableDNSSEC: false,
 		},
 		Filtering: filterConf{ProtectionEnabled: true},
+		HTTP:      &httpConf{Address: m.cfg.AdGuardWebListen},
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -213,6 +234,25 @@ func (m *Manager) ensureBinary() (string, error) {
 	target := filepath.Join(m.cfg.AdGuardDataDir, "adguardhome")
 	if st, err := os.Stat(target); err == nil && !st.IsDir() {
 		return target, nil
+	}
+	// try to copy from binary directory if it exists there
+	if exe, err := os.Executable(); err == nil {
+		srcCand := filepath.Join(filepath.Dir(exe), "adguardhome")
+		if st, err2 := os.Stat(srcCand); err2 == nil && !st.IsDir() {
+			_ = os.MkdirAll(filepath.Dir(target), 0755)
+			if err3 := copyFile(srcCand, target); err3 == nil {
+				_ = os.Chmod(target, 0755)
+				return target, nil
+			}
+		}
+	}
+	// try current working directory
+	if st, err := os.Stat("adguardhome"); err == nil && !st.IsDir() {
+		_ = os.MkdirAll(filepath.Dir(target), 0755)
+		if err3 := copyFile("adguardhome", target); err3 == nil {
+			_ = os.Chmod(target, 0755)
+			return target, nil
+		}
 	}
 	// download for current arch
 	arch := aghArch()
