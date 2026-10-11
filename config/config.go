@@ -85,10 +85,10 @@ func LoadConfig() *Config {
 		DomainHTTPSPort:     EnvInt("DOMAIN_HTTPS_PORT", 443),
 		DomainChallengePort: EnvInt("DOMAIN_CHALLENGE_PORT", 8100),
 
-		AdGuardEnabled:        EnvStr("ADGUARD_ENABLED", "false") == "true",
+		AdGuardEnabled:        EnvStr("ADGUARD_ENABLED", "true") == "true",
 		AdGuardBinaryPath:     EnvStr("ADGUARD_BINARY", "adguardhome"),
 		AdGuardDataDir:        EnvStr("ADGUARD_DATA_DIR", EnvStr("DATA_DIR", ".")),
-		AdGuardDNSListen:      EnvStr("ADGUARD_DNS_LISTEN", "10.100.0.1:53"),
+		AdGuardDNSListen:      EnvStr("ADGUARD_DNS_LISTEN", "127.0.0.1:5353"),
 		AdGuardWebListen:      EnvStr("ADGUARD_WEB_LISTEN", "127.0.0.1:1116"),
 		AdGuardUpstream:       EnvStr("ADGUARD_UPSTREAM", "1.1.1.1"),
 		AdGuardUpstreamFamily: EnvStr("ADGUARD_UPSTREAM_FAMILY", "1.1.1.2"),

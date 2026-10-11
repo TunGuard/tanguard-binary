@@ -1,3 +1,5 @@
+package config
+
 // This is the canonical version set at release time.
 // The dashboard reads this to detect updates and to display the current
 // build version. It is also exposed via the API.

@@ -12,3 +12,4 @@ web_credentials.json
 api_key.json
 *.log
 .DS_Store
+adguardhome
