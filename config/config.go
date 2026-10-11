@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"strconv"
 )
@@ -56,10 +57,11 @@ type Config struct {
 // LoadConfig builds the server configuration from the environment, applying the
 // documented defaults for anything that is not set.
 func LoadConfig() *Config {
+	address := EnvStr("WG_ADDRESS", "10.100.0.1/24")
 	return &Config{
 		InterfaceName: EnvStr("WG_INTERFACE", "wg0"),
 		ListenPort:    EnvInt("WG_LISTEN_PORT", 13231),
-		Address:       EnvStr("WG_ADDRESS", "10.100.0.1/24"),
+		Address:       address,
 		Subnet:        EnvStr("WG_SUBNET", "10.100.0.0/24"),
 		MTU:           EnvInt("WG_MTU", 1420),
 		APIListen:     EnvStr("API_LISTEN", ":9000"),
@@ -88,12 +90,25 @@ func LoadConfig() *Config {
 		AdGuardEnabled:        EnvStr("ADGUARD_ENABLED", "true") == "true",
 		AdGuardBinaryPath:     EnvStr("ADGUARD_BINARY", "adguardhome"),
 		AdGuardDataDir:        EnvStr("ADGUARD_DATA_DIR", EnvStr("DATA_DIR", ".")),
-		AdGuardDNSListen:      EnvStr("ADGUARD_DNS_LISTEN", "127.0.0.1:5353"),
+		AdGuardDNSListen:      EnvStr("ADGUARD_DNS_LISTEN", AdGuardDNSDefault(address)),
 		AdGuardWebListen:      EnvStr("ADGUARD_WEB_LISTEN", "127.0.0.1:1116"),
 		AdGuardUpstream:       EnvStr("ADGUARD_UPSTREAM", "1.1.1.1"),
 		AdGuardUpstreamFamily: EnvStr("ADGUARD_UPSTREAM_FAMILY", "1.1.1.2"),
 		AdGuardFilterAdult:    EnvStr("ADGUARD_FILTER_ADULT", "false") == "true",
 	}
+}
+
+// AdGuardDNSDefault points AdGuard's DNS listener at the server's own address
+// inside the tunnel, on the standard DNS port. Clients are handed this address
+// in their WireGuard profile, so it must be an address they can reach through
+// the tunnel -- a loopback address would resolve to the client itself.
+func AdGuardDNSDefault(address string) string {
+	if ip, _, err := net.ParseCIDR(address); err == nil {
+		return net.JoinHostPort(ip.String(), "53")
+	}
+	// No parseable tunnel address: keep the filter on loopback rather than
+	// exposing it on every interface.
+	return "127.0.0.1:5353"
 }
 
 // EnvStr returns the environment value for key, or def when it is unset or empty.

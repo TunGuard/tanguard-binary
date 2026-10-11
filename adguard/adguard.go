@@ -3,11 +3,13 @@ package adguard
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -151,23 +153,31 @@ func (m *Manager) ensureConfig() error {
 	httpBlock["address"] = m.loopbackWebAddr()
 	doc["http"] = httpBlock
 
-	// Seed the DNS listener and a protective default on first run only.
-	if _, ok := doc["dns"]; !ok {
-		dnsHost, dnsPort, err := parseListen(m.cfg.AdGuardDNSListen)
-		if err != nil {
-			return err
-		}
+	// The DNS listener is owned by this server too: it must sit on the tunnel
+	// address clients are handed, so re-apply host and port on every start.
+	// Everything else in the dns block (upstreams, blocklists, cache) is
+	// preserved because AdGuard manages it.
+	dnsBlock, _ := doc["dns"].(map[string]interface{})
+	if dnsBlock == nil {
+		dnsBlock = map[string]interface{}{}
+	}
+	dnsHost, dnsPort, err := parseListen(m.bindAddr())
+	if err != nil {
+		return err
+	}
+	dnsBlock["bind_hosts"] = []interface{}{dnsHost}
+	dnsBlock["port"] = dnsPort
+	if _, ok := dnsBlock["upstream_dns"]; !ok {
 		upstreams := []string{m.cfg.AdGuardUpstream}
 		if m.cfg.AdGuardFilterAdult && m.cfg.AdGuardUpstreamFamily != "" {
 			upstreams = []string{m.cfg.AdGuardUpstreamFamily}
 		}
-		doc["dns"] = map[string]interface{}{
-			"bind_hosts":    []string{dnsHost},
-			"port":          dnsPort,
-			"upstream_dns":  upstreams,
-			"enable_dnssec": false,
-		}
+		dnsBlock["upstream_dns"] = upstreams
 	}
+	if _, ok := dnsBlock["enable_dnssec"]; !ok {
+		dnsBlock["enable_dnssec"] = false
+	}
+	doc["dns"] = dnsBlock
 	if _, ok := doc["filtering"]; !ok {
 		doc["filtering"] = map[string]interface{}{"protection_enabled": true}
 	}
@@ -296,15 +306,56 @@ func (m *Manager) IsRunning() bool {
 	return m.running
 }
 
+// bindAddr is the address AdGuard's DNS actually binds. The configured listen
+// points at the server's tunnel address so clients can reach the filter; when
+// that address is not present on this host (for example mesh-only mode, where
+// WireGuard is not running) it falls back to loopback so the filter still
+// starts instead of exiting on a bind error.
+func (m *Manager) bindAddr() string {
+	host, port, err := parseListen(m.cfg.AdGuardDNSListen)
+	if err != nil || port == 0 {
+		return m.cfg.AdGuardDNSListen
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || isLocalIP(host) {
+		return m.cfg.AdGuardDNSListen
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+}
+
+// isLocalIP reports whether host names an address assigned to this machine.
+// A non-literal host is left alone: AdGuard gets to resolve it.
+func isLocalIP(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return true
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// DNSForGroup returns the DNS server to put in a client's WireGuard profile
+// when its group uses AdGuard. The port is omitted on the standard DNS port,
+// because WireGuard clients expect a bare address there.
 func (m *Manager) DNSForGroup(groupAllows bool) string {
 	if !m.cfg.AdGuardEnabled || !groupAllows {
 		return ""
 	}
-	if _, _, err := netSplit(m.cfg.AdGuardDNSListen); err == nil {
-		// return just host:port
-		return m.cfg.AdGuardDNSListen
+	host, port, err := parseListen(m.cfg.AdGuardDNSListen)
+	if err != nil || host == "" {
+		return ""
 	}
-	return ""
+	if port == 0 || port == 53 {
+		return host
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 // WebAddr is the loopback address the AdGuard UI is actually bound to. Remote

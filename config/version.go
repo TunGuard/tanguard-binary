@@ -8,5 +8,5 @@ package config
 // by the linker (ldflags -X). We avoid embedding a timestamp to ensure
 // reproducible builds. For tagged releases, the tag should match this value
 // (e.g. v2.4.0).
-var Version = "2.4.15"
+var Version = "2.4.16"
 

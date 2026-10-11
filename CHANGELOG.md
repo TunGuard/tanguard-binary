@@ -5,6 +5,24 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.16] - 2026-10-11
+
+### Fixed
+
+- **AdGuard DNS is now reachable through the VPN.** AdGuard was bound to
+  `127.0.0.1:5353`, and client WireGuard profiles were handed that same
+  loopback address as their `DNS =` value. On a phone `127.0.0.1` means the
+  phone itself, so DNS queries never reached the server and filtering silently
+  did nothing for any device with WireGuard access. The DNS listener now
+  defaults to the server's tunnel address on port 53 (`10.100.0.1:53`, derived
+  from `WG_ADDRESS`), and the client profile is handed that bare tunnel address.
+- **The DNS listener is re-applied on every start.** Previously the AdGuard
+  config's DNS block was only written on first run, so an existing
+  `AdGuardHome.yaml` kept its old loopback listener. Host and port are now
+  corrected on each start while the rest of the block (upstreams, blocklists,
+  cache) is preserved. When the tunnel address is not present (mesh-only mode),
+  it falls back to loopback so the filter still starts.
+
 ## [2.4.9] - 2026-10-10
 
 ### Fixed
