@@ -89,7 +89,7 @@ func LoadConfig() *Config {
 		AdGuardBinaryPath:     EnvStr("ADGUARD_BINARY", "adguardhome"),
 		AdGuardDataDir:        EnvStr("ADGUARD_DATA_DIR", EnvStr("DATA_DIR", ".")),
 		AdGuardDNSListen:      EnvStr("ADGUARD_DNS_LISTEN", "10.100.0.1:53"),
-		AdGuardWebListen:      EnvStr("ADGUARD_WEB_LISTEN", "1.1.1.6:80"),
+		AdGuardWebListen:      EnvStr("ADGUARD_WEB_LISTEN", "127.0.0.1:1116"),
 		AdGuardUpstream:       EnvStr("ADGUARD_UPSTREAM", "1.1.1.1"),
 		AdGuardUpstreamFamily: EnvStr("ADGUARD_UPSTREAM_FAMILY", "1.1.1.2"),
 		AdGuardFilterAdult:    EnvStr("ADGUARD_FILTER_ADULT", "false") == "true",
