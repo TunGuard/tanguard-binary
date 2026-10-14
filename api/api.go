@@ -44,6 +44,7 @@ type API struct {
 	dom  *domain.Manager
 	adg  *adguard.Manager
 	dns  *wg.DNSRedirect
+	sess *sessionStore
 	ipMu sync.Mutex
 }
 
@@ -57,6 +58,7 @@ func NewAPI(wgSrv *wg.WgServer, store *peers.PeerStore, cfg *config.Config, cred
 		monitor:  monitor,
 		policies: policy.NewPolicyStore(cfg.DataDir),
 		dns:      wg.NewDNSRedirect(cfg),
+		sess:     newSessionStore(),
 	}
 }
 
@@ -90,6 +92,7 @@ func (a *API) SetDomain(dom *domain.Manager) {
 	if a.dom != nil && a.trp != nil {
 		a.dom.SetTRPLookup(a.trpLookup)
 	}
+	a.wireDomainAdGuard()
 }
 
 // SetAdGuard attaches the AdGuard Home manager and mirrors the dashboard login
@@ -100,6 +103,44 @@ func (a *API) SetAdGuard(ag *adguard.Manager) {
 	}
 	a.adg = ag
 	a.syncAdGuardAuth()
+	a.wireDomainAdGuard()
+}
+
+// wireDomainAdGuard points a DNS domain mapping at AdGuard Home's loopback DoH
+// endpoint and the address its plain DNS binds. The resolvers return "" while
+// AdGuard is not running, so a DNS mapping drops out of service (and its DoT
+// listener is torn down) when the filter is stopped, and returns when it is
+// started again.
+func (a *API) wireDomainAdGuard() {
+	if a == nil || a.dom == nil {
+		return
+	}
+	if a.adg == nil {
+		a.dom.SetAdGuard(nil, nil)
+		return
+	}
+	a.dom.SetAdGuard(
+		func() string {
+			if !a.adg.IsRunning() {
+				return ""
+			}
+			return a.adg.WebAddr()
+		},
+		func() string {
+			if !a.adg.IsRunning() {
+				return ""
+			}
+			return a.adg.DNSTarget()
+		},
+	)
+}
+
+// refreshDomains re-resolves the domain mappings. It is called when AdGuard
+// starts or stops, because that changes whether a DNS front can answer.
+func (a *API) refreshDomains() {
+	if a != nil && a.dom != nil {
+		a.dom.Refresh()
+	}
 }
 
 // SyncAdGuardDNS rebuilds the tunnel DNS redirect for peers in AdGuard-enabled
@@ -155,19 +196,38 @@ func (a *API) trpLookup(ref string) (addr, desc string, ok bool) {
 	return addr, fmt.Sprintf("TRP mapping %s (%s) on :%v", fmt.Sprint(match["id"]), node, match["bind_port"]), true
 }
 
-func (a *API) Start() {
+// routes builds the whole HTTP surface. Start wraps it in the logging and CORS
+// middleware; tests call it directly so they exercise the real mux, auth and
+// static handling without binding a port.
+func (a *API) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	if a.cfg.WebEnabled {
+		// favicon is unauthenticated and empty; browsers request it before any
+		// credential challenge, and a 401 here makes the console noisy.
 		mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 		webHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !a.authenticated(r) {
-				requireBasicAuth(w)
+			if a.authenticated(r) {
+				// The sign-in page has nothing to offer an authenticated user,
+				// except while the shipped default login is still in place: the
+				// dashboard sends them here to set their own credentials.
+				if (r.URL.Path == "/login.html" || r.URL.Path == "/login") && !a.usingDefaultWebCreds() {
+					http.Redirect(w, r, "/index.html", http.StatusFound)
+					return
+				}
+				webui.Handler().ServeHTTP(w, r)
 				return
 			}
-			webui.Handler().ServeHTTP(w, r)
+			// Unauthenticated browser: serve the real login page instead of the
+			// native Basic-auth popup. The page needs its stylesheet and scripts
+			// to render, so those few assets stay public too.
+			if isPublicAsset(r.URL.Path) {
+				webui.Handler().ServeHTTP(w, r)
+				return
+			}
+			webui.LoginPage(w)
 		})
 		mux.Handle("/", webHandler)
 		log.Printf("[api] web dashboard enabled at http://localhost%s (auth: %s)", a.cfg.APIListen, a.effectiveWebUsername())
@@ -185,6 +245,8 @@ func (a *API) Start() {
 	mux.Handle("/api/configure", a.requireAPI(a.handleConfigure))
 	mux.Handle("/api/backup/download", a.requireAPI(a.handleBackupDownload))
 	mux.Handle("/api/backup/restore", a.requireAPI(a.handleBackupRestore))
+	mux.HandleFunc("/api/login", a.handleLogin)
+	mux.HandleFunc("/api/logout", a.handleLogout)
 	mux.Handle("/api/auth/status", a.requireDashboardAuth(a.handleAuthStatus))
 	mux.Handle("/api/web/credentials", a.requireDashboardAuth(a.handleChangeCredentials))
 	mux.Handle("/api/key", a.requireDashboardAuth(a.handleAPIKey))
@@ -204,7 +266,11 @@ func (a *API) Start() {
 	registerDomainRoutes(mux, a)
 	registerAdGuardRoutes(mux, a)
 
-	handler := corsMiddleware(logMiddleware(mux))
+	return mux
+}
+
+func (a *API) Start() {
+	handler := corsMiddleware(logMiddleware(a.routes()))
 
 	a.startVersionChecker()
 
@@ -234,6 +300,17 @@ func (a *API) Start() {
 	}
 }
 
+// isPublicAsset lists the assets the login page itself loads. Without them the
+// page would render unstyled and its scripts would never run, but everything
+// else in the dashboard bundle stays behind the session.
+func isPublicAsset(path string) bool {
+	switch path {
+	case "/style.css", "/common.js", "/login.js":
+		return true
+	}
+	return false
+}
+
 func (a *API) effectiveWebUsername() string {
 	if u, ok := a.creds.Username(); ok {
 		return u
@@ -241,12 +318,17 @@ func (a *API) effectiveWebUsername() string {
 	return a.cfg.WebUsername
 }
 
+// authenticated accepts either the dashboard login via HTTP Basic Auth (used by
+// scripts, the SSH gateway and curl) or a live session cookie issued by the
+// HTML sign-in form. a.sess is nil for the hand-built APIs the tests construct,
+// so the cookie path is skipped rather than dereferenced.
 func (a *API) authenticated(r *http.Request) bool {
-	user, pass, ok := r.BasicAuth()
-	if !ok {
-		return false
+	if user, pass, ok := r.BasicAuth(); ok {
+		if a.creds.VerifyWeb(user, pass, a.cfg.WebUsername, a.cfg.WebPassword) {
+			return true
+		}
 	}
-	return a.creds.VerifyWeb(user, pass, a.cfg.WebUsername, a.cfg.WebPassword)
+	return a.sess != nil && a.sess.valid(a.sessionToken(r))
 }
 
 // apiAuthorized accepts the dashboard login (HTTP Basic Auth) or a valid API
@@ -284,7 +366,7 @@ func (a *API) requireAPI(next http.HandlerFunc) http.HandlerFunc {
 func (a *API) requireDashboardAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !a.authenticated(r) {
-			requireBasicAuth(w)
+			jsonErr(w, 401, "unauthorized: dashboard login required")
 			return
 		}
 		next(w, r)
@@ -296,11 +378,6 @@ func (a *API) usingDefaultWebCreds() bool {
 		return false
 	}
 	return a.cfg.WebUsername == "admin" && a.cfg.WebPassword == "tanguard"
-}
-
-func requireBasicAuth(w http.ResponseWriter) {
-	w.Header().Set("WWW-Authenticate", `Basic realm="TunGuard"`)
-	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
 func (a *API) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +393,22 @@ func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 405, "POST required")
 		return
 	}
+	req, ok := decodeCredentialRequest(w, r)
+	if !ok {
+		return
+	}
+	if !a.applyWebCredentials(w, req.Username, req.Password, req.ConfirmPassword) {
+		return
+	}
+	a.finishCredentialChange(w, req.Username)
+}
 
+// decodeCredentialRequest reads a credential body for the change endpoint.
+func decodeCredentialRequest(w http.ResponseWriter, r *http.Request) (struct {
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirm_password"`
+}, bool) {
 	var req struct {
 		Username        string `json:"username"`
 		Password        string `json:"password"`
@@ -324,26 +416,30 @@ func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := limitedDecoder(r, &req); err != nil {
 		jsonErr(w, 400, "invalid JSON: "+err.Error())
-		return
+		return req, false
 	}
+	return req, true
+}
 
-	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" {
+// applyWebCredentials validates and stores new dashboard credentials. It writes
+// the error response itself and returns false on any failure.
+func (a *API) applyWebCredentials(w http.ResponseWriter, username, password, confirm string) bool {
+	username = strings.TrimSpace(username)
+	if username == "" {
 		jsonErr(w, 400, "username cannot be empty")
-		return
+		return false
 	}
-	if len(req.Password) < 8 {
+	if len(password) < 8 {
 		jsonErr(w, 400, "password must be at least 8 characters")
-		return
+		return false
 	}
-	if req.Password != req.ConfirmPassword {
+	if password != confirm {
 		jsonErr(w, 400, "passwords do not match")
-		return
+		return false
 	}
-
-	if err := a.creds.Set(req.Username, req.Password); err != nil {
+	if err := a.creds.Set(username, password); err != nil {
 		jsonErr(w, 500, "failed to save credentials: "+err.Error())
-		return
+		return false
 	}
 
 	// Keep AdGuard's admin login in step with the dashboard, restarting it so
@@ -354,11 +450,23 @@ func (a *API) handleChangeCredentials(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[api] WARNING: could not restart AdGuard Home after credential change: %v", err)
 		}
 	}
+	return true
+}
 
-	log.Printf("[api] web dashboard credentials updated for user %q", req.Username)
+// finishCredentialChange rotates sessions and reports success. Sessions minted
+// under the old login must not survive the change, so the caller gets a fresh
+// one and stays signed in.
+func (a *API) finishCredentialChange(w http.ResponseWriter, username string) {
+	if a.sess != nil {
+		a.sess.clearAll()
+		if tok, ok := a.sess.create(); ok {
+			a.setSessionCookie(w, tok)
+		}
+	}
+	log.Printf("[api] web dashboard credentials updated for user %q", username)
 	jsonResp(w, 200, map[string]interface{}{
 		"success":     true,
-		"username":    req.Username,
+		"username":    username,
 		"must_change": false,
 	})
 }

@@ -139,8 +139,8 @@ func buildCommands() []*cliCommand {
 		{
 			name:     "domain",
 			subs:     []string{"list", "add", "update", "remove"},
-			usage:    "domain list | domain add <domain> --trp <ref> | --wg <ip> <port> [--disable] | domain update <ref> [--domain name] [--enable|--disable] [--trp <ref>|--wg <ip> <port>] | domain remove <ref>",
-			desc:     "map a domain to a TRP mapping or a WireGuard service (auto HTTPS)",
+			usage:    "domain list | domain add <domain> --trp <ref> | --wg <ip> <port> | --dns [--disable] | domain update <ref> [--domain name] [--enable|--disable] [--trp <ref>|--wg <ip> <port>|--dns] | domain remove <ref>",
+			desc:     "map a domain to a TRP mapping, a WireGuard service or a public DNS front (auto HTTPS/DoH/DoT)",
 			run:      cmdDomain,
 			complete: completeDomain,
 		},
@@ -1963,6 +1963,7 @@ func cmdAdGuard(s *consoleSession, args []string) {
 			return
 		}
 		a.SyncAdGuardDNS()
+		a.refreshDomains()
 		s.okf("adguard started at %s", a.adg.WebAddr())
 	case "stop":
 		if !a.adg.IsRunning() {
@@ -1974,6 +1975,7 @@ func cmdAdGuard(s *consoleSession, args []string) {
 			return
 		}
 		a.SyncAdGuardDNS()
+		a.refreshDomains()
 		s.okf("adguard stopped")
 	case "config":
 		s.stat("enabled", fmt.Sprintf("%t", a.cfg.AdGuardEnabled))

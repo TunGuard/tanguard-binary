@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,13 @@ const (
 	// BackendWG proxies straight to a service listening on a WireGuard peer's
 	// address, reachable via the tunnel that peer brought up.
 	BackendWG Backend = "wg"
+	// BackendDNS turns the domain into a public DNS front: the resolver is
+	// served as DNS-over-HTTPS on the proxy's HTTPS port and DNS-over-TLS on
+	// the DoT port, both answering through the server's AdGuard Home. The
+	// resolver endpoint is open so devices can be pointed at the domain, while
+	// the AdGuard admin UI stays on loopback; visiting the domain serves a
+	// TunGuard landing page instead.
+	BackendDNS Backend = "dns"
 )
 
 // Record is one persisted domain mapping.
@@ -75,10 +83,28 @@ type Manager struct {
 	httpPort  int
 	httpsPort int
 	chPort    int
+	dotPort   int
 
 	records  []*Record
 	byID     map[string]*Record
 	byDomain map[string]*Record
+
+	// adguardDoH/adguardDNS resolve AdGuard Home's loopback DoH endpoint and
+	// the address its plain DNS actually binds. They are injected by the API,
+	// which owns the AdGuard manager, and return "" when it is not running.
+	adguardDoH func() string
+	adguardDNS func() string
+
+	// acm is the autocert manager used in built-in mode, kept so the DoT
+	// listener can reuse the same certificate cache.
+	acm certSource
+
+	// transport is shared by every reverse-proxy request.
+	transport *http.Transport
+
+	// dotLn/dotStarted track the DNS-over-TLS listener.
+	dotLn      net.Listener
+	dotStarted bool
 
 	// trpLookup resolves a TRP mapping reference to the loopback address its
 	// listener is bound on. It is injected by the API, which owns the TRP
@@ -109,10 +135,37 @@ func NewManager(cfg *config.Config) *Manager {
 		httpPort:  cfg.DomainHTTPPort,
 		httpsPort: cfg.DomainHTTPSPort,
 		chPort:    cfg.DomainChallengePort,
+		dotPort:   cfg.DomainDoTPort,
 		byID:      make(map[string]*Record),
 		byDomain:  make(map[string]*Record),
 		routes:    newRouteTable(),
+		transport: newProxyTransport(),
 	}
+}
+
+// SetAdGuard installs the resolvers that let a DNS mapping answer through
+// AdGuard Home. doh returns AdGuard's loopback DoH address, dns the address its
+// plain DNS binds; both return "" when AdGuard is disabled or not running. It
+// re-syncs the mappings so a DNS front appears (or disappears) the moment
+// AdGuard starts or stops.
+func (m *Manager) SetAdGuard(doh, dns func() string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.adguardDoH = doh
+	m.adguardDNS = dns
+	m.resyncLocked()
+}
+
+// Refresh re-resolves every mapping against the current state. It is called
+// when AdGuard starts or stops so a DNS front's routes, DoH endpoint and DoT
+// listener follow it.
+func (m *Manager) Refresh() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.resyncLocked()
 }
 
 // SetTRPLookup installs the resolver that turns a TRP mapping reference into
@@ -194,7 +247,7 @@ func (m *Manager) Start() {
 	if err := os.MkdirAll(m.dir, 0700); err != nil {
 		log.Printf("[domain] data dir: %v", err)
 	}
-	m.iss = newIssuer(filepath.Join(m.dir, "certs"), m.chPort)
+	m.iss = newIssuer(filepath.Join(m.dir, "certs"), m.chPort, m.dotPort)
 	m.resyncLocked()
 }
 
@@ -279,16 +332,16 @@ func (m *Manager) Update(id, domain string, enabled *bool, in AddRequest) (*Reco
 		newDomain = nd
 		rec.Domain = nd
 	}
-	if enabled != nil && *enabled != rec.Enabled {
-		if *enabled {
-			m.applyLocked(rec)
-		} else {
-			m.unapplyLocked(rec)
-		}
+	if enabled != nil {
 		rec.Enabled = *enabled
 	}
 	rec.UpdatedAt = time.Now()
 	m.byDomain[strings.ToLower(newDomain)] = rec
+
+	// Resync once, after every field is mutated: the backend, the name and the
+	// enabled flag all feed the routing table, and a DNS mapping also starts or
+	// stops its DoT listener here.
+	m.applyLocked(rec)
 
 	if err := m.save(); err != nil {
 		return nil, fmt.Errorf("persist: %w", err)
@@ -306,7 +359,6 @@ func (m *Manager) Remove(id string) error {
 	if rec == nil {
 		return fmt.Errorf("no such domain mapping")
 	}
-	m.unapplyLocked(rec)
 	delete(m.byID, id)
 	delete(m.byDomain, strings.ToLower(rec.Domain))
 	for i, r := range m.records {
@@ -315,6 +367,9 @@ func (m *Manager) Remove(id string) error {
 			break
 		}
 	}
+	// Resync after the record is gone, so its route is dropped and, when it
+	// was the last DNS mapping, the DoT listener is torn down.
+	m.unapplyLocked(rec)
 	if err := m.save(); err != nil {
 		return fmt.Errorf("persist: %w", err)
 	}
@@ -341,8 +396,12 @@ func (m *Manager) validateBackendLocked(in AddRequest) error {
 		if in.TargetPort < 1 || in.TargetPort > 65535 {
 			return errors.New("target port must be between 1 and 65535")
 		}
+	case BackendDNS:
+		if m.adguardDoH == nil {
+			return errors.New("a DNS backend needs AdGuard Home enabled (ADGUARD_ENABLED=true)")
+		}
 	case "":
-		return errors.New("a backend is required: `--trp <ref>` or `--wg <ip> <port>`")
+		return errors.New("a backend is required: `--trp <ref>`, `--wg <ip> <port>` or `--dns`")
 	default:
 		return fmt.Errorf("unknown backend %q", in.Backend)
 	}
@@ -371,6 +430,15 @@ func (m *Manager) backendAddrLocked(rec *Record) (addr, desc string, err error) 
 	case BackendWG:
 		return net.JoinHostPort(rec.TargetIP, fmt.Sprint(rec.TargetPort)),
 			fmt.Sprintf("WireGuard %s:%d", rec.TargetIP, rec.TargetPort), nil
+	case BackendDNS:
+		if m.adguardDoH == nil {
+			return "", "", errors.New("AdGuard Home is not available for a DNS mapping")
+		}
+		addr := m.adguardDoH()
+		if addr == "" {
+			return "", "", errors.New("AdGuard Home is not running")
+		}
+		return addr, "AdGuard Home (DoH + DoT)", nil
 	default:
 		return "", "", fmt.Errorf("unknown backend %q", rec.Backend)
 	}

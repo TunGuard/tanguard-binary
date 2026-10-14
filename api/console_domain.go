@@ -83,6 +83,8 @@ func cmdDomain(s *consoleSession, args []string) {
 				targetPort = n
 				backend = domain.BackendWG
 				i += 2
+			case "--dns":
+				backend = domain.BackendDNS
 			case "--enable":
 				enabled = true
 			case "--disable":
@@ -96,7 +98,7 @@ func cmdDomain(s *consoleSession, args []string) {
 			}
 		}
 		if len(pos) != 1 {
-			s.errf("usage: domain add <domain> --trp <ref> | --wg <ip> <port> [--disable]")
+			s.errf("usage: domain add <domain> --trp <ref> | --wg <ip> <port> | --dns [--disable]")
 			return
 		}
 		rec, err := a.dom.Add(domain.AddRequest{
@@ -112,11 +114,15 @@ func cmdDomain(s *consoleSession, args []string) {
 			return
 		}
 		s.printf("%s %s → %s\r\n", paint(ansiGreen, "mapped"), paint(ansiBold, rec.Domain), a.domBackendDesc(rec.ID))
+		if rec.Backend == domain.BackendDNS {
+			s.notef("DNS front: DoH at https://%s/dns-query and DoT on %s:%d; the landing page is served at https://%s/",
+				rec.Domain, rec.Domain, a.cfg.DomainDoTPort, rec.Domain)
+		}
 		s.notef("a TLS certificate is requested automatically on first request")
 
 	case "update":
 		if len(args) < 2 {
-			s.errf("usage: domain update <ref> [--domain name] [--enable on|off] [--trp <ref> | --wg <ip> <port>]")
+			s.errf("usage: domain update <ref> [--domain name] [--enable on|off] [--trp <ref> | --wg <ip> <port> | --dns]")
 			return
 		}
 		id, err := a.resolveDomain(args[0])
@@ -162,6 +168,8 @@ func cmdDomain(s *consoleSession, args []string) {
 				in.TargetIP = rest[i+1]
 				in.TargetPort = n
 				i += 2
+			case "--dns":
+				in.Backend = domain.BackendDNS
 			default:
 				s.errf("unknown flag %s", rest[i])
 				return

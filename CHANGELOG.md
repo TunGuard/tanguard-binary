@@ -5,6 +5,34 @@ All notable changes to TunGuard are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.4.18] - 2026-10-14
+
+### Added
+
+- **A mapped domain can now be a public, login-free DNS resolver.** Add a
+  mapping with `domain add dns.example.com --dns` and TunGuard serves
+  AdGuard Home as DNS-over-HTTPS at `https://dns.example.com/dns-query` (on the
+  domain HTTPS port) and DNS-over-TLS on `dns.example.com:853`
+  (`DOMAIN_DOT_PORT`), so phones can point their Private DNS at it. Only the
+  `/dns-query` path is proxied to AdGuard; the root shows a TunGuard landing
+  page and every other path returns 404, so AdGuard's admin UI is never exposed
+  through the mapping. Works in both built-in mode and when nginx, Apache,
+  Caddy or Traefik is detected. Requires AdGuard Home to be enabled.
+- **The dashboard signs in with a real HTML page instead of the browser's Basic
+  auth popup.** A successful sign-in gets a 12-hour `HttpOnly`, `SameSite=Lax`
+  session cookie, and changing the login rotates every session. On a server
+  still on the shipped `admin` / `tanguard` login, signing in with the defaults
+  forces the "set your dashboard login" step before the dashboard opens. HTTP
+  Basic auth and API keys keep working for scripts, the SSH gateway and curl.
+
+### Changed
+
+- The dashboard login page no longer triggers the native HTTP Basic challenge
+  (no `WWW-Authenticate`), and the dashboard login / key endpoints answer 401
+  with a JSON body rather than a Basic challenge.
+
 ## [2.4.17] - 2026-10-11
 
 ### Added

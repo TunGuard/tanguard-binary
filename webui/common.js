@@ -55,8 +55,13 @@ function showToast(msg, type) {
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
-function logout() {
-  showToast('The dashboard uses HTTP Basic Auth. Close the browser or open a private window to sign out.');
+async function logout() {
+  const r = await fetchAPI('/api/logout', { method: 'POST' });
+  if (r && r.session) {
+    location.replace('/login.html');
+    return;
+  }
+  showToast('This browser sent HTTP Basic credentials, which cannot be cleared from the page. Close the browser or open a private window to sign out.');
 }
 
 function formatBytes(b) {
@@ -196,7 +201,7 @@ async function changeCredentials(e) {
   btn.disabled = false;
   if (r && r.success) {
     f.reset();
-    showToast('Credentials updated. Log in again with the new credentials.', 'success');
+    showToast('Credentials updated.', 'success');
     setTimeout(() => location.reload(), 1500);
   } else {
     showToast('Failed to update credentials: ' + (r?.error || 'unknown'), 'error');
@@ -210,7 +215,7 @@ async function checkAuthStatus() {
   if (CURRENT_PAGE === 'login') return;
   const r = await fetchAPI('/api/auth/status');
   if (r && r.must_change) {
-    location.replace('login.html');
+    location.replace('/login.html');
   }
 }
 

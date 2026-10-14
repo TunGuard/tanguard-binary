@@ -17,38 +17,58 @@
   <img src="https://img.shields.io/github/stars/TunGuard/tanguard-binary?style=flat-square" alt="Stars">
 </p>
 
-**Userspace WireGuard VPN Server — Web Dashboard — SSH Gateway**
+**The self-hosted connectivity platform for the modern era.**
 
-TunGuard is a self-contained WireGuard server that runs entirely in userspace — no kernel modules, no `apt install wireguard`, no kernel configuration. It includes a web dashboard for managing peers (clients) and generating ready-to-use configuration files with QR codes for your phone.
+TunGuard is a **Zero Trust, identity-based connectivity platform** that replaces your legacy VPN, SASE and PAM stack. One control plane connects remote teams, multi-cloud environments, CI/CD pipelines, edge and IoT devices, and AI workloads: over direct peer-to-peer links, a TCP relay, and WireGuard-compatible access.
+
+The difference is what you run. Everything is a **single userspace binary** on a server you own. No kernel modules, no containers, no per-device agents to babysit, and no vendor in the middle of your traffic.
 
 ```bash
 sudo ./tanguard -web
-# Open http://yourserver:9000 → add clients from your browser
+# Open http://yourserver:9000 → connect your first device
 ```
+
+## Why TunGuard
+
+| You need | TunGuard gives you | Replaces |
+|---|---|---|
+| Identity-based remote access | Dashboard identities, per-peer keys and zero-trust group policy | Legacy VPN, PAM |
+| A direct path between devices | P2P mesh with NAT traversal and automatic relay fallback | Overlay VPNs |
+| Standard VPN clients | WireGuard `.conf` files and QR codes for phones, laptops, routers | WireGuard, OpenVPN |
+| Network segmentation | Per-group policy for LAN, internet, inter-device and DNS | SASE, firewall rules |
+| Clean DNS every time | Server-enforced AdGuard filtering and a public DoH/DoT resolver | DNS filtering services |
+| A public front for a service | Automatic Let's Encrypt HTTPS on a domain, or a public DNS resolver | Reverse proxies, ingress |
+| To publish a node's service | TCP relay (TRP) to the internet on a port you choose | Port forwarding, bastions |
+| Shell access without a VPN client | SSH gateway: jump host and in-browser terminals | Bastion hosts, PAM |
+
+All of it runs in **userspace** on one host. There is no kernel driver to load, no `apt install wireguard`, and no container runtime to maintain.
 
 ## Quick Start
 
-### Install the latest binary (recommended)
+### 1. Install TunGuard
+
+The recommended way is the official installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TunGuard/get/main/installer.sh | bash
 ```
 
-### Or build from source
+Or build from source:
 
 ```bash
 git clone https://github.com/TunGuard/tanguard-binary.git
 cd tanguard-binary
 go build -o tanguard .
-
 sudo ./tanguard -web
 ```
 
-## The dashboard will be available at:
+### 2. Open the dashboard
 
+```
 http://YOUR_SERVER_IP:9000
+```
 
-## 3. Log in
+### 3. Log in
 
 On a fresh installation, use the default dashboard credentials:
 ```
@@ -63,11 +83,11 @@ After logging in, TunGuard will immediately take you to the dashboard login setu
 
 Your new dashboard credentials are also used by the optional SSH Gateway.
 
-## 4. Connect your first device
+### 4. Connect your first device
 
 You can connect a normal WireGuard device or provision a MikroTik router.
 
-WireGuard device
+**WireGuard device**
 
 1. Open Peers.
 2. Click Generate Config.
@@ -76,9 +96,8 @@ WireGuard device
 5. Download or copy the ".conf" file, or scan the displayed QR code with the WireGuard mobile app.
 
 That's it. Your device can now connect to the TunGuard VPN.
----
 
-#### MikroTik router
+**MikroTik router**
 
 For MikroTik routers, you can use MikroTik Provision to generate and apply the required RouterOS configuration.
 
@@ -93,14 +112,14 @@ Open:
 This is useful when you want to connect an entire network behind a MikroTik router instead of configuring individual devices.
 
 
-### Full service: VPN + Web UI + SSH jump host
+## Run the full stack (VPN + Web UI + SSH)
 
 ```bash
 sudo ./tanguard -web -ssh
 ```
 
 - The WireGuard VPN listens on **UDP port 13231** (default).
-- The web dashboard is disabled by default — start it explicitly with `-web` (or `WEB_ENABLED=true`).
+- The web dashboard is disabled by default; start it explicitly with `-web` (or `WEB_ENABLED=true`).
 - When enabled, the web dashboard is at **http://yourserver:9000**.
 - Default web login: `admin` / `tanguard`. On first login you will be required to set a new username and password.
 
@@ -324,6 +343,7 @@ All settings are configured via environment variables.
 | `DOMAIN_HTTP_PORT` | `80` | Public HTTP port used for the ACME challenge and redirects |
 | `DOMAIN_HTTPS_PORT` | `443` | Public HTTPS port of the domain proxy |
 | `DOMAIN_CHALLENGE_PORT` | `8100` | Local port the Let's Encrypt HTTP-01 challenge answers on |
+| `DOMAIN_DOT_PORT` | `853` | Public DNS-over-TLS port used when a domain is mapped to AdGuard |
 
 ## Building from Source
 
@@ -371,7 +391,7 @@ sudo tar -czf ~/tanguard-backup.tar.gz -C /var/lib/tanguard .
 
 - **Change the default passwords** (`WEB_PASSWORD`) in production. The dashboard forces you to set a new web login on first use; use `tanguard --reset` if you ever lose it. The SSH gateway shares this login.
 - **Protect the API.** Every `/api/*` endpoint (except `/api/health`) now requires the dashboard login or an API key. Generate your API key in **Settings → API Key** and pass it as the `X-API-Key` header. Regenerate it any time it may have leaked.
-- The web dashboard uses HTTP Basic Auth over plain HTTP by default. Put it behind a reverse proxy with TLS (e.g. Caddy, Nginx, or Traefik) for production use.
+- The dashboard signs you in with an HTML form and a 12-hour session cookie (`HttpOnly`, `SameSite=Lax`). Over plain HTTP the cookie is sent unencrypted, so put the dashboard behind a reverse proxy with TLS (e.g. Caddy, Nginx, or Traefik) for production use. HTTP Basic Auth and API keys still work for scripts.
 - The SSH gateway uses password auth by default. Consider key-based auth for production.
 - Client private keys created by **Generate Config** are stored in `peers.json` (mode 0600, inside `DATA_DIR`) so configs can be re-downloaded / re-scanned from the dashboard. Manually added peers (public key only) have no stored client key.
 

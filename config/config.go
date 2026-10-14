@@ -40,6 +40,9 @@ type Config struct {
 	DomainHTTPPort      int
 	DomainHTTPSPort     int
 	DomainChallengePort int
+	// DomainDoTPort is where a domain mapped as a DNS front also answers
+	// DNS-over-TLS, next to the DoH endpoint on DomainHTTPSPort.
+	DomainDoTPort int
 
 	// AdGuard Home integration: optional DNS filtering service. When enabled,
 	// TunGuard will manage an AdGuard Home instance and allow policy groups to
@@ -86,6 +89,7 @@ func LoadConfig() *Config {
 		DomainHTTPPort:      EnvInt("DOMAIN_HTTP_PORT", 80),
 		DomainHTTPSPort:     EnvInt("DOMAIN_HTTPS_PORT", 443),
 		DomainChallengePort: EnvInt("DOMAIN_CHALLENGE_PORT", 8100),
+		DomainDoTPort:       EnvInt("DOMAIN_DOT_PORT", 853),
 
 		AdGuardEnabled:        EnvStr("ADGUARD_ENABLED", "true") == "true",
 		AdGuardBinaryPath:     EnvStr("ADGUARD_BINARY", "adguardhome"),

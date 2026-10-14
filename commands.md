@@ -175,6 +175,7 @@ trp remove 3                                    # by id or bind-address:port
 domain list                                     # mappings: domain, backend, target, state
 domain add app.example.com --trp 3              # behind an existing TRP mapping
 domain add api.example.com --wg 10.100.0.2 8080 # behind a tunneled service
+domain add dns.example.com --dns                # public DoH + DoT resolver
 domain update app.example.com --disable         # pause without deleting
 domain update app.example.com --domain new.example.com
 domain remove app.example.com                   # by id or domain name
@@ -187,6 +188,13 @@ otherwise the built-in proxy listens on ports 80/443. The proxy is on by
 default and does nothing until the first mapping is added; disable it with
 `DOMAIN_ENABLED=false`. Ports are configurable with `DOMAIN_HTTP_PORT`,
 `DOMAIN_HTTPS_PORT` and `DOMAIN_CHALLENGE_PORT`.
+
+A `--dns` mapping turns the domain into a public, login-free resolver backed
+by AdGuard Home: `https://dns.example.com/dns-query` serves DNS-over-HTTPS on
+`DOMAIN_HTTPS_PORT` and `dns.example.com:853` serves DNS-over-TLS on
+`DOMAIN_DOT_PORT`. The root path shows a TunGuard landing page and every other
+path returns 404, so AdGuard's admin UI is never exposed. This requires
+AdGuard Home to be enabled (`ADGUARD_ENABLED=true`).
 
 ## AdGuard Home
 

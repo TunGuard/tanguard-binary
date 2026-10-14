@@ -177,10 +177,31 @@ func (m *Manager) ensureConfig() error {
 	if _, ok := dnsBlock["enable_dnssec"]; !ok {
 		dnsBlock["enable_dnssec"] = false
 	}
+	// The resolver can be published as a public DoH/DoT front, so cap the
+	// per-client query rate (AdGuard's own default is 20) unless the operator
+	// already tuned it.
+	if _, ok := dnsBlock["ratelimit"]; !ok {
+		dnsBlock["ratelimit"] = 20
+	}
 	doc["dns"] = dnsBlock
 	if _, ok := doc["filtering"]; !ok {
 		doc["filtering"] = map[string]interface{}{"protection_enabled": true}
 	}
+
+	// A mapped DNS domain terminates TLS at this server and forwards plain
+	// HTTP to AdGuard's DoH endpoint, so unencrypted DoH must be accepted on
+	// the loopback web listener. TLS itself is never enabled here: the public
+	// certificate is owned by the domain proxy.
+	tlsBlock, _ := doc["tls"].(map[string]interface{})
+	if tlsBlock == nil {
+		tlsBlock = map[string]interface{}{}
+	}
+	if _, ok := tlsBlock["enabled"]; !ok {
+		tlsBlock["enabled"] = false
+	}
+	tlsBlock["allow_unencrypted_doh"] = true
+	doc["tls"] = tlsBlock
+
 	if _, ok := doc["schema_version"]; !ok {
 		doc["schema_version"] = 27
 	}

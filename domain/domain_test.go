@@ -1,6 +1,10 @@
 package domain
 
 import (
+	"crypto/tls"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +38,110 @@ func testManager(t *testing.T, dir string) *Manager {
 		t.Fatalf("load: %v", err)
 	}
 	return m
+}
+
+// wireAdGuard points a manager at a fake AdGuard DoH endpoint so a DNS mapping
+// resolves in tests.
+func wireAdGuard(m *Manager, doh, dns string) {
+	m.SetAdGuard(func() string { return doh }, func() string { return dns })
+}
+
+func TestDNSBackendRequiresAdGuard(t *testing.T) {
+	m := testManager(t, "")
+	if _, err := m.Add(AddRequest{Domain: "dns.example.com", Backend: BackendDNS, Enabled: true}); err == nil {
+		t.Fatal("a DNS backend must fail without AdGuard wired up")
+	}
+}
+
+func TestDNSFrontRoutesLandingAndDoH(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dns-query" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write([]byte("dns-answer"))
+	}))
+	defer backend.Close()
+	backendAddr := strings.TrimPrefix(backend.URL, "http://")
+
+	m := testManager(t, "")
+	wireAdGuard(m, backendAddr, "127.0.0.1:5300")
+	if _, err := m.Add(AddRequest{Domain: "dns.example.com", Backend: BackendDNS, Enabled: true}); err != nil {
+		t.Fatalf("add dns: %v", err)
+	}
+
+	h := m.proxyHandler()
+
+	// The root is the TunGuard landing page, not the AdGuard login.
+	root := httptest.NewRecorder()
+	h.ServeHTTP(root, httptest.NewRequest("GET", "https://dns.example.com/", nil))
+	if root.Code != http.StatusOK {
+		t.Fatalf("landing status = %d, want 200", root.Code)
+	}
+	body := root.Body.String()
+	for _, want := range []string{"TunGuard", "Frost-bit-star", "https://tunguard.github.io/docs/", "https://dns.example.com/dns-query"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing page missing %q", want)
+		}
+	}
+
+	// Only /dns-query reaches AdGuard; anything else is hidden.
+	doh := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "https://dns.example.com/dns-query", strings.NewReader("query"))
+	req.Header.Set("Content-Type", "application/dns-message")
+	h.ServeHTTP(doh, req)
+	if doh.Code != http.StatusOK || doh.Body.String() != "dns-answer" {
+		t.Fatalf("doh proxy = %d %q, want 200 dns-answer", doh.Code, doh.Body.String())
+	}
+
+	hidden := httptest.NewRecorder()
+	h.ServeHTTP(hidden, httptest.NewRequest("GET", "https://dns.example.com/login.html", nil))
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("admin path status = %d, want 404", hidden.Code)
+	}
+}
+
+func TestDNSFrontStartsAndStopsDoT(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dotPort := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	m := NewManager(&config.Config{DataDir: t.TempDir(), DomainEnabled: true, DomainDoTPort: dotPort})
+	m.SetDetect(func() DetectResult { return DetectResult{Port80Free: true, Port443Free: true} })
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	wireAdGuard(m, "127.0.0.1:1116", "127.0.0.1:5300")
+
+	rec, err := m.Add(AddRequest{Domain: "dns.example.com", Backend: BackendDNS, Enabled: true})
+	if err != nil {
+		t.Fatalf("add dns: %v", err)
+	}
+	if !m.dotStarted {
+		t.Fatal("DoT listener should start when a DNS mapping is live")
+	}
+
+	if err := m.Remove(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if m.dotStarted {
+		t.Fatal("DoT listener should stop when the last DNS mapping is removed")
+	}
+}
+
+func TestDoTGetCertificateRejectsUnknownHost(t *testing.T) {
+	m := testManager(t, "")
+	wireAdGuard(m, "127.0.0.1:1116", "127.0.0.1:5300")
+	if _, err := m.Add(AddRequest{Domain: "dns.example.com", Backend: BackendDNS, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.dotGetCertificate(&tls.ClientHelloInfo{ServerName: "evil.example.com"}); err == nil {
+		t.Fatal("certificate must be refused for a host with no DNS mapping")
+	}
 }
 
 func TestNormalizeDomain(t *testing.T) {
@@ -230,6 +338,45 @@ func TestWritersRendering(t *testing.T) {
 		if !strings.Contains(ap, want) {
 			t.Errorf("apache config missing %q:\n%s", want, ap)
 		}
+	}
+}
+
+func TestWritersDNSFront(t *testing.T) {
+	rec := &Record{ID: "dns1", Domain: "dns.example.com", Backend: BackendDNS}
+	rr := renderRec{
+		rec:      rec,
+		addr:     "127.0.0.1:1116",
+		certPath: "/var/certs/cert.pem",
+		keyPath:  "/var/certs/key.pem",
+		ssl:      true,
+		dns:      true,
+	}
+
+	ng := nginxConf(rr, 8100)
+	for _, want := range []string{
+		"location = /dns-query {",
+		"proxy_pass http://127.0.0.1:1116;",
+		"proxy_pass http://127.0.0.1:8100;",
+	} {
+		if !strings.Contains(ng, want) {
+			t.Errorf("nginx DNS config missing %q:\n%s", want, ng)
+		}
+	}
+
+	if ap := apacheConf(rr, 8100); !strings.Contains(ap, "ProxyPass /dns-query http://127.0.0.1:1116/dns-query") {
+		t.Errorf("apache DNS config missing DoH proxy:\n%s", ap)
+	}
+
+	tjDir := t.TempDir()
+	if err := writeTraefik(tjDir, []renderRec{rr}, 8100); err != nil {
+		t.Fatalf("writeTraefik: %v", err)
+	}
+	tj, err := os.ReadFile(filepath.Join(tjDir, "tanguard-dynamic.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tj), "Path(`/dns-query`)") {
+		t.Errorf("traefik DNS config missing DoH router:\n%s", tj)
 	}
 }
 

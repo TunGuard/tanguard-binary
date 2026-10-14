@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/acme"
+
+	"tanguard/webui"
 )
 
 // Issuer obtains and caches Let's Encrypt certificates for the domain
@@ -30,6 +32,7 @@ type Issuer struct {
 	mu      sync.Mutex
 	dir     string
 	port    int
+	dotPort int
 	started bool
 	client  *acme.Client
 	tokens  map[string]string
@@ -37,8 +40,8 @@ type Issuer struct {
 	srv     *http.Server
 }
 
-func newIssuer(dir string, port int) *Issuer {
-	return &Issuer{dir: dir, port: port, tokens: map[string]string{}}
+func newIssuer(dir string, port, dotPort int) *Issuer {
+	return &Issuer{dir: dir, port: port, dotPort: dotPort, tokens: map[string]string{}}
 }
 
 // start loads the account key and brings up the loopback challenge handler.
@@ -90,10 +93,20 @@ func (iss *Issuer) start() {
 	}
 }
 
-// ServeHTTP answers http-01 challenges from the ACME server.
+// ServeHTTP answers http-01 challenges from the ACME server. It also serves
+// the TunGuard landing page at the root, because in external mode a DNS
+// mapping's webserver vhost proxies everything except /dns-query here.
 func (iss *Issuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	const prefix = "/.well-known/acme-challenge/"
 	path := r.URL.Path
+	if path == "/" || path == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		host := hostOnly(r.Host)
+		if err := webui.DNSLanding(w, "https://"+host+"/dns-query", net.JoinHostPort(host, fmt.Sprint(iss.dotPort))); err != nil {
+			log.Printf("[domain] landing page: %v", err)
+		}
+		return
+	}
 	iss.mu.Lock()
 	keyAuth, ok := iss.tokens[strings.TrimPrefix(path, prefix)]
 	iss.mu.Unlock()

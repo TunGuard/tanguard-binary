@@ -18,6 +18,9 @@ type renderRec struct {
 	certPath string
 	keyPath  string
 	ssl      bool
+	// dns marks a public DNS front: only /dns-query is proxied to AdGuard and
+	// everything else serves the TunGuard landing page.
+	dns bool
 }
 
 func (m *Manager) certPaths(domain string) (certPath, keyPath string) {
@@ -54,6 +57,7 @@ func (m *Manager) writeExternalLocked(det DetectResult) {
 		certPath, keyPath := m.certPaths(rec.Domain)
 		rr := renderRec{rec: rec, addr: addr, certPath: certPath, keyPath: keyPath}
 		rr.ssl = fileExists(certPath) && fileExists(keyPath)
+		rr.dns = rec.Backend == BackendDNS
 		inputs = append(inputs, rr)
 		present[rec.ID] = true
 	}
@@ -67,7 +71,7 @@ func (m *Manager) writeExternalLocked(det DetectResult) {
 	case "caddy":
 		err = writeCaddy(confDir, inputs, m.chPort)
 	case "traefik":
-		err = writeTraefik(confDir, inputs)
+		err = writeTraefik(confDir, inputs, m.chPort)
 	default:
 		err = fmt.Errorf("unsupported webserver %q", name)
 	}
@@ -160,6 +164,16 @@ func nginxConf(rr renderRec, chPort int) string {
 		fmt.Fprintf(&b, "\nserver {\n\tlisten 443 ssl;\n\tserver_name %s;\n", rr.rec.Domain)
 		fmt.Fprintf(&b, "\tssl_certificate %s;\n\tssl_certificate_key %s;\n", rr.certPath, rr.keyPath)
 		fmt.Fprintf(&b, "\tssl_protocols TLSv1.2 TLSv1.3;\n")
+		if rr.dns {
+			// Only the DoH endpoint reaches AdGuard; everything else is the
+			// TunGuard landing page, served by our loopback challenge listener.
+			// AdGuard's admin UI is never exposed through a DNS mapping.
+			fmt.Fprintf(&b, "\tlocation = /dns-query {\n\t\tproxy_pass http://%s;\n", rr.addr)
+			fmt.Fprintf(&b, "\t\tproxy_http_version 1.1;\n\t\tproxy_set_header Host $host;\n\t}\n")
+			fmt.Fprintf(&b, "\tlocation / {\n\t\tproxy_pass http://127.0.0.1:%d;\n", chPort)
+			fmt.Fprintf(&b, "\t\tproxy_set_header Host $host;\n\t}\n}\n")
+			return b.String()
+		}
 		fmt.Fprintf(&b, "\tlocation / {\n\t\tproxy_pass http://%s;\n", rr.addr)
 		fmt.Fprintf(&b, "\t\tproxy_http_version 1.1;\n")
 		fmt.Fprintf(&b, "\t\tproxy_set_header Host $host;\n")
@@ -211,7 +225,14 @@ func apacheConf(rr renderRec, chPort int) string {
 		fmt.Fprintf(&b, "\n<VirtualHost *:443>\n\tServerName %s\n", rr.rec.Domain)
 		fmt.Fprintf(&b, "\tSSLEngine on\n\tSSLCertificateFile %s\n\tSSLCertificateKeyFile %s\n", rr.certPath, rr.keyPath)
 		fmt.Fprintf(&b, "\tProxyPreserveHost On\n")
-		fmt.Fprintf(&b, "\tProxyPass / http://%s/\n\tProxyPassReverse / http://%s/\n", rr.addr, rr.addr)
+		if rr.dns {
+			// AdGuard's DoH endpoint only; the rest is the TunGuard landing
+			// page served by our loopback challenge listener.
+			fmt.Fprintf(&b, "\tProxyPass /dns-query http://%s/dns-query\n\tProxyPassReverse /dns-query http://%s/dns-query\n", rr.addr, rr.addr)
+			fmt.Fprintf(&b, "\tProxyPass / http://127.0.0.1:%d/\n\tProxyPassReverse / http://127.0.0.1:%d/\n", chPort, chPort)
+		} else {
+			fmt.Fprintf(&b, "\tProxyPass / http://%s/\n\tProxyPassReverse / http://%s/\n", rr.addr, rr.addr)
+		}
 		fmt.Fprintf(&b, "\t<Proxy *>\n\t\tRequire all granted\n\t</Proxy>\n</VirtualHost>\n")
 	}
 	return b.String()
@@ -224,6 +245,13 @@ func writeCaddy(dir string, recs []renderRec, chPort int) error {
 	b.WriteString("# Managed by TunGuard — do not edit.\n")
 	b.WriteString("# Imported from the main Caddyfile; see `import tanguard-domains.conf`.\n\n")
 	for _, rr := range recs {
+		if rr.dns {
+			// DoH only reaches AdGuard; everything else is the TunGuard
+			// landing page on our loopback listener.
+			fmt.Fprintf(&b, "%s {\n\treverse_proxy /dns-query %s\n\treverse_proxy / 127.0.0.1:%d\n}\n\n",
+				rr.rec.Domain, rr.addr, chPort)
+			continue
+		}
 		fmt.Fprintf(&b, "%s {\n\treverse_proxy %s\n}\n\n", rr.rec.Domain, rr.addr)
 	}
 	if err := writeFile(filepath.Join(dir, "tanguard-domains.conf"), b.String()); err != nil {
@@ -244,18 +272,30 @@ func writeCaddy(dir string, recs []renderRec, chPort int) error {
 
 // ─── traefik ─────────────────────────────────────────────────────────────
 
-func writeTraefik(dir string, recs []renderRec) error {
+func writeTraefik(dir string, recs []renderRec, chPort int) error {
 	var b strings.Builder
 	b.WriteString("# Managed by TunGuard — do not edit.\n")
 	b.WriteString("http:\n  routers:\n")
 	for _, rr := range recs {
 		name := "tanguard-" + rr.rec.ID
+		if rr.dns {
+			// Path-split: /dns-query goes to AdGuard, everything else to the
+			// TunGuard landing page on the loopback challenge listener.
+			fmt.Fprintf(&b, "    %s-doh:\n      rule: Host(`%s`) && Path(`/dns-query`)\n      service: %s\n      tls: {}\n",
+				name, rr.rec.Domain, name)
+			fmt.Fprintf(&b, "    %s-web:\n      rule: Host(`%s`)\n      service: %s-landing\n      tls: {}\n",
+				name, rr.rec.Domain, name)
+			continue
+		}
 		fmt.Fprintf(&b, "    %s:\n      rule: Host(`%s`)\n      service: %s\n      tls: {}\n", name, rr.rec.Domain, name)
 	}
 	b.WriteString("  services:\n")
 	for _, rr := range recs {
 		name := "tanguard-" + rr.rec.ID
 		fmt.Fprintf(&b, "    %s:\n      loadBalancer:\n        servers:\n          - url: http://%s\n", name, rr.addr)
+		if rr.dns {
+			fmt.Fprintf(&b, "    %s-landing:\n      loadBalancer:\n        servers:\n          - url: http://127.0.0.1:%d\n", name, chPort)
+		}
 	}
 	return writeFile(filepath.Join(dir, "tanguard-dynamic.yml"), b.String())
 }
